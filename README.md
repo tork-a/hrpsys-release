@@ -1,3 +1,22 @@
+## hrpsys - 0.0.1-2
+
+User `k-okada@kokada-t430s` released the packages in the `hrpsys` repository by running `/usr/bin/bloom-release --rosdistro groovy --track groovy hrpsys` on `Tue, 27 Aug 2013 16:01:37 -0000`
+
+The `hrpsys` package was released.
+
+Version of package(s) in repository `hrpsys`:
+- rosdistro version: `0.0.1-1`
+- old version: `0.0.1-1`
+- new version: `0.0.1-2`
+
+Versions of tools used:
+- bloom version: `0.4.4`
+- catkin_pkg version: `0.1.19`
+- rosdep version: `0.10.21`
+- rosdistro version: `0.2.13`
+- vcstools version: `0.1.31`
+
+
 ## hrpsys - 0.0.1-0
 
 User `n130s@130s-serval` released the packages in the `hrpsys` repository by running `/usr/bin/bloom-release hrpsys --track hydro --rosdistro hydro --edit` on `Thu, 22 Aug 2013 06:46:57 -0000`
