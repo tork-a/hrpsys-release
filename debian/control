@@ -1,0 +1,12 @@
+Source: ros-groovy-hrpsys
+Section: misc
+Priority: extra
+Maintainer: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
+Build-Depends: debhelper (>= 7.0.50~), doxygen, freeglut3-dev, libglew-dev, libirrlicht-dev, libqhull-dev, libsdl1.2-dev, libxml2-dev, libxmu-dev, ros-groovy-catkin, ros-groovy-opencv2, ros-groovy-openhrp3, subversion
+Homepage: http://ros.org/wiki/hrpsys
+Standards-Version: 3.9.2
+
+Package: ros-groovy-hrpsys
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, freeglut3-dev, libirrlicht-dev, libqhull-dev, libsdl1.2-dev, libxml2-dev, libxmu-dev, ros-groovy-opencv2, ros-groovy-openhrp3
+Description: Basic RT components and utilities to control robots using OpenRTM. Real version number, 3.1.4, is kept back until this discussion (http://code.google.com/p/rtm-ros-robotics/issues/detail?id=159) resolves.
