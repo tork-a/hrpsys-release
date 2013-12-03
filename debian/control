@@ -1,0 +1,12 @@
+Source: ros-groovy-hrpsys
+Section: misc
+Priority: extra
+Maintainer: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
+Build-Depends: debhelper (>= 7.0.50~), doxygen, freeglut3-dev, libglew-dev, libirrlicht-dev, libqhull-dev, libsdl1.2-dev, libxml2-dev, libxmu-dev, ros-groovy-catkin, ros-groovy-opencv2, ros-groovy-openhrp3, subversion
+Homepage: http://ros.org/wiki/hrpsys
+Standards-Version: 3.9.2
+
+Package: ros-groovy-hrpsys
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, freeglut3-dev, libirrlicht-dev, libqhull-dev, libsdl1.2-dev, libxml2-dev, libxmu-dev, ros-groovy-opencv2, ros-groovy-openhrp3
+Description: An OpenRTM-aist-based robot controller. This package is the most tailored for humanoid (dual-arm and/or biped) robots for historical reason. hrpsys package does not only wraps but build and installs the code from its mainstream repository (code.google.com/p/hrpsys-base). The package version number is synchronized to that of mainstream, based on this decision.
