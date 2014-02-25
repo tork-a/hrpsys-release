@@ -1,5 +1,24 @@
 ## hrpsys - 315.1.7-0
 
+User `n130s@130s-t440s` released the packages in the `hrpsys` repository by running `/usr/bin/bloom-release hrpsys --track groovy --rosdistro groovy` on `Tue, 25 Feb 2014 02:43:58 -0000`
+
+The `hrpsys` package was released.
+
+Version of package(s) in repository `hrpsys`:
+- rosdistro version: `315.1.6-0`
+- old version: `315.1.6-0`
+- new version: `315.1.7-0`
+
+Versions of tools used:
+- bloom version: `0.4.9`
+- catkin_pkg version: `0.1.26`
+- rosdep version: `0.10.25`
+- rosdistro version: `0.3.4`
+- vcstools version: `0.1.33`
+
+
+## hrpsys - 315.1.7-0
+
 User `n130s@130s-t440s` released the packages in the `hrpsys` repository by running `/usr/bin/bloom-release --rosdistro hydro --track hydro hrpsys` on `Mon, 03 Feb 2014 05:17:59 -0000`
 
 The `hrpsys` package was released.
