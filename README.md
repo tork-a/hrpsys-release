@@ -1,3 +1,22 @@
+## hrpsys (hydro) - 315.2.1-0
+
+The packages in the `hrpsys` repository were released into the `hydro` distro by running `/usr/bin/bloom-release hrpsys --rosdistro hydro --track hydro` on `Mon, 12 May 2014 01:06:25 -0000`
+
+The `hrpsys` package was released.
+
+Version of package(s) in repository `hrpsys`:
+- rosdistro version: `315.2.0-0`
+- old version: `315.2.0-0`
+- new version: `315.2.1-0`
+
+Versions of tools used:
+- bloom version: `0.5.4`
+- catkin_pkg version: `0.2.0`
+- rosdep version: `0.10.27`
+- rosdistro version: `0.3.4`
+- vcstools version: `0.1.33`
+
+
 ## hrpsys (groovy) - 315.2.0-0
 
 The packages in the `hrpsys` repository were released into the `groovy` distro by running `/usr/bin/bloom-release hrpsys --rosdistro groovy --track groovy` on `Sun, 11 May 2014 14:04:33 -0000`
