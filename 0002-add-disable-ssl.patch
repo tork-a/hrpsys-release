@@ -1,0 +1,25 @@
+From 795807d80c397e4a1e1ab9bf8f1af3cb08a4bd7a Mon Sep 17 00:00:00 2001
+From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
+Date: Tue, 13 May 2014 01:31:49 +0900
+Subject: [PATCH 2/2] add disable ssl
+
+---
+ Makefile.hrpsys-base |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Makefile.hrpsys-base b/Makefile.hrpsys-base
+index e88ab59..c03d4f6 100644
+--- a/Makefile.hrpsys-base
++++ b/Makefile.hrpsys-base
+@@ -22,7 +22,7 @@ NUM_OF_CPUS = $(shell grep -c '^processor' /proc/cpuinfo)
+ include $(MK_DIR)/git_checkout.mk
+ 
+ disable_ssl:
+-        git config --global http.sslVerify false
++	git config --global http.sslVerify false
+ 
+ installed: disable_ssl $(GIT_DIR) $(GIT_PATCH) 
+ 	@echo "patch hrpsys-base ... "
+-- 
+1.7.9.5
+
