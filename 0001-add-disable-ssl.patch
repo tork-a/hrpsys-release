@@ -1,4 +1,4 @@
-From af7b08d6c22ff0c00bac978350577c55f68d1fbc Mon Sep 17 00:00:00 2001
+From f6b266b55a2558a3c13b88175a6329284e6938fe Mon Sep 17 00:00:00 2001
 From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
 Date: Mon, 12 May 2014 23:03:18 +0900
 Subject: [PATCH 1/2] add disable ssl
