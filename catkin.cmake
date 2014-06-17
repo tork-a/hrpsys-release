@@ -126,6 +126,21 @@ if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/installed)
     endif(_make_failed)
   endif()
 
+  # copy src
+  execute_process(
+    COMMAND cmake -E make_directory ${PROJECT_SOURCE_DIR}/src/
+    RESULT_VARIABLE _make_failed)
+  if (_make_failed)
+    message(FATAL_ERROR "make_directory ${PROJECT_SOURCE_DIR}/src failed: ${_make_failed}")
+  endif(_make_failed)
+  execute_process(
+    COMMAND cmake -E copy_directory ${CMAKE_CURRENT_BINARY_DIR}/build/hrpsys-base-source/rtc/ ${PROJECT_SOURCE_DIR}/src/rtc
+    RESULT_VARIABLE _make_failed)
+    message("copy src directory ${CATKIN_DEVEL_PREFIX}/build/hrpsys-base-source/ ${PROJECT_SOURCE_DIR}/src")
+  if (_make_failed)
+    message(FATAL_ERROR "copy src failed: ${_make_failed}")
+  endif(_make_failed)
+
   message("openhrp3_SOURCE_DIR=${openhrp3_SOURCE_DIR}")
   message("    openhrp3_PREFIX=${openhrp3_PREFIX}")
   file(GLOB _conf_files "${PROJECT_SOURCE_DIR}/share/hrpsys/samples/*/*.conf" "${PROJECT_SOURCE_DIR}/share/hrpsys/samples/*/*.xml")
@@ -176,7 +191,7 @@ install(
 install(DIRECTORY lib/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/lib
   USE_SOURCE_PERMISSIONS)
-install(DIRECTORY test share samples
+install(DIRECTORY test share samples src
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
   USE_SOURCE_PERMISSIONS)
 
@@ -228,6 +243,7 @@ install(CODE
      if (EXISTS ${openhrp3_SOURCE_DIR})
        execute_process(COMMAND sed -i s@${openhrp3_SOURCE_DIR}/share/OpenHRP-3.1@${openhrp3_PREFIX}/share/openhrp3/share/OpenHRP-3.1@g \${_conf_file})
      endif()
+     execute_process(COMMAND sed -i s@${PROJECT_SOURCE_DIR}/share@${CMAKE_INSTALL_PREFIX}/share/hrpsys/share@g \${_conf_file})
      execute_process(COMMAND sed -i s@${PROJECT_SOURCE_DIR}/lib@${CMAKE_INSTALL_PREFIX}/share/hrpsys/lib@g \${_conf_file})
      execute_process(COMMAND sed -i s@${CATKIN_DEVEL_PREFIX}@${CMAKE_INSTALL_PREFIX}@g \${_conf_file})
    endforeach()
@@ -242,6 +258,21 @@ install(CODE
    execute_process(COMMAND sed -i s@${CATKIN_DEVEL_PREFIX}@${CMAKE_INSTALL_PREFIX}@g \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_LIB_DESTINATION}/pkgconfig/hrpsys-base.pc) # basic
    execute_process(COMMAND sed -i s@{prefix}/bin@${prefix}/lib/hrpsys@g \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_LIB_DESTINATION}/pkgconfig/hrpsys-base.pc) # basic
    execute_process(COMMAND sed -i s@${PROJECT_SOURCE_DIR}/share@\\\${prefix}/share/hrpsys/share@g \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_LIB_DESTINATION}/pkgconfig/hrpsys-base.pc) # basic
+")
+
+install(CODE
+  "# check if stable rtc exists
+   message(STATUS \"check if \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_BIN_DESTINATION}/hrpsys-simulator exists\")
+   if (NOT EXISTS \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_BIN_DESTINATION}/hrpsys-simulator )
+    message(FATAL_ERROR \"FATAL_ERROR \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_BIN_DESTINATION}/hrpsys-simulator does not exists\")
+   endif()
+   # PYTHONPATH=install/lib/python2.7/dist-packages:$PYTHONPATH python -c 'from hrpsys.hrpsys_config import *; print(\";\".join(map((lambda rtc: rtc[1]), HrpsysConfigurator.__new__(HrpsysConfigurator).getRTCListUnstable())))'
+   foreach(_rtc SequencePlayer;StateHolder;ForwardKinematics;TorqueFilter;KalmanFilter;VirtualForceSensor;RemoveForceSensorLinkOffset;ImpedanceController;AutoBalancer;Stabilizer;CollisionDetector;TorqueController;SoftErrorLimiter;DataLogger)
+     message(STATUS \"check if \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}/lib/\${_rtc}.so exists\")
+     if (NOT EXISTS \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}/lib/\${_rtc}.so )
+       message(FATAL_ERROR \"FATAL_ERROR \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}/lib/\${_rtc}.so does not exists\")
+     endif()
+   endforeach()
 ")
 
 add_rostest(test/test-hrpsys.test)
