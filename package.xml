@@ -1,6 +1,6 @@
 <package>
   <name>hrpsys</name>
-  <version>315.2.1</version>
+  <version>315.2.2</version>
   <description>
    <p>An <a href = "http://www.openrtm.org/pub/OpenRTM-aist/">OpenRTM-aist</a>-based robot controller. This package is the most tailored for humanoid (dual-arm and/or biped) robots for historical reason.</p>
    <p>hrpsys package does not only wraps but build and installs the code from its mainstream repository (<a href = "https://code.google.com/p/hrpsys-base/source/browse/#svn%2Ftrunk">code.google.com/p/hrpsys-base</a>).</p>
@@ -33,7 +33,7 @@
   <build_depend>libxml2</build_depend>
   <build_depend>libxmu-dev</build_depend>
   <build_depend>mk</build_depend>
-  <build_depend>opencv2</build_depend>
+  <build_depend>cv_bridge</build_depend>
   <build_depend>openhrp3</build_depend>
   <build_depend>python-tk</build_depend>
   <build_depend>rostest</build_depend>
@@ -49,7 +49,7 @@
   <run_depend>libqhull</run_depend>
   <run_depend>libxml2</run_depend>
   <run_depend>libxmu-dev</run_depend>
-  <run_depend>opencv2</run_depend>
+  <run_depend>cv_bridge</run_depend>
   <run_depend>openhrp3</run_depend>
   <run_depend>python-tk</run_depend>
   <run_depend>sdl</run_depend>
