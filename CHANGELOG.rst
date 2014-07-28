@@ -2,6 +2,44 @@
 Changelog for package hrpsys
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+315.2.3 (2014-07-28)
+--------------------
+* Adjusted to OpenRTM 1.1.1
+* use OCTOMAP_LIBRARY_DIRS instead of OCTOMAP_DIR, Fix #258
+* Use boost library for copysign because copysign in cmath only can be used in C++11 later
+* samplerobot
+  * Add example for impedancecontroller rtc. 
+  * Add examples for samplerobot by copying from start-jsk/hrpsys/samples discussed in https://github.com/fkanehiro/hrpsys-base/issues/240. 
+  * Add setFootSteps examples. 
+  * Add samples for DataLogger and Stabilizer.
+  * Add example for impedancecontroller rtc
+* (JointPathEx.*, AutoBalancer, Stabilizer, ImpedanceController) : Remove solveLimbIK and use calcInverseKinematics2Loop
+* (samplerobot_auto_balancer.py, AutoBalancer.cpp) Fix overwriting of target foot coords, add example to check non-default stride stopping, and check RECTANGLE swing orbit
+* JointPathEx.*
+  * Move nullspace codes to reduce difference between calcInverseKinematics2Loop and solveLimbIK. 
+  * Remove unnecessary transition_count and resetting of nullspace vector. 
+  * Move nullspace codes to reduce difference between calcInverseKinematics2Loop and solveLimbIK.
+* hrpsys_config.py
+  * Add readDigitalOutput.
+  * Add connection for st qCurrent. 
+  * Add comment upon setTargetPose IK failure. 
+  * Add logger connection for walking RTCs. 
+  Use Group to find eef name. PEP8 improvement.
+* Stabilizer.*
+  * Add new stabilizer control law (currently not enabled). 
+  * Use :end_effector instead of link origin in IK and fix mode transition.
+  * Add getParameter function for stabilizer parameter
+* create_changelog.sh
+  * Add script for changelog from subdirectory information (discussed in `jsk-ros-pkg/jsk_roseus#134 <https://github.com/jsk-ros-pkg/jsk_roseus/issues/134>`_)
+* GaitGenerator.*
+  * Fix bug of swing foot calculation and add reset orbit
+  * Support rectangle foot swing orbit
+* (AutoBalancerService.idl, AutoBalancer.*, GaitGenerator.*, testGaitGenerator) : Enable to configure swing orbit type
+* (TorqueController) Added TwoDofControllerDynamicsModel option to initialize process. Use dynamic model based on equation of motion.
+* Fixed default tauMax from model. climit -> climit*gearRatio*torqueConst
+* Modified m_loop type int -> long long
+* Contributors: Kei Okada, Shunichi Nozawa
+
 315.2.2 (2014-06-17)
 --------------------
 * (catkin.cmake) add code to check if hrpsys is installed correctly
@@ -15,6 +53,23 @@ Changelog for package hrpsys
 * (catkin.cmkae) use sed to fis install dir
 * sample/samplerobot-remove-force-offset.py : add sample code for RMFO rtc
 * (catkin.cmake) add disable ssl
+*
+* update in fkanehiro/hrpsys-base repository
+* 74d07f9 (lib/util/CMakeLists.txt) forget to install Hrpsys.h (24c6139826)
+* 0303d15 (rtc/PlaneRemover) adds a configuration variable pointNumThd to specify the minimum number of points to define a plane#226 from orikuma/refactoring-thermo-limiter
+* f34f28b (python/rtm.py) adds return value of setConfiguration() and setProperty()
+* 85afa1c (rtc/ThermoLimiter) Removed TwoDofController, which is not used in ThermoLimiter now
+* 63f3ae7 (python/hrpsys_config.py) add getRTCList for unstable RTCs
+* 9eb3a12 (rtc/SORFilter) fixes typos(again)
+* 233a31a (rtc/PlaneRemover) adds a new component, PlaneRemover
+* 26f2f09 (rtc/SORFilter) fixes typos
+* c5a8ee5 (rtc/TorqueFilter) Modified debug message position for tf params
+* 9c13ee2 (rtc/TorqueFilter) Added timestamp to tf.rtc:tauOut and modified method to deal with input error3e Modified and supressed error messages for TorqueFilter
+* de0b63e (rtc/TorqueFilter) Modified and supressed error messages for TorqueFilter
+* 6ebcb7b (rtc/TorqueController) Supress error message by debugLevel and output qRefIn to qRefOut when torque controller does not work due to some fault of input.
+* d3a7750 (rtc/PCDLoader) removes backup files
+* eafe5f5 (rtc/PCDLoader) adds a new component, PCDLoader
+
 * Contributors: Kei Okada, Shunichi Nozawa
 
 315.2.1 (2014-05-12)
