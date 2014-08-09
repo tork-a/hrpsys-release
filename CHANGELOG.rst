@@ -2,12 +2,46 @@
 Changelog for package hrpsys
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+315.2.4 (2014-08-10)
+--------------------
+* (AutoBalancer.*) : Add data port for acceleration reference which can be used in KalmanFilter.cpp
+* (AutoBalancer*) : Use function and variable names. Use TargetParameter and CurrentParmeter
+* (AutoBalancer.*, Stabilizer.*) : Remove duplicate codes for transition_smooth_gain
+* (Autobalancer.*) : Remove unused codes and use is_legged_robot flag
+* (hrpsys_config.py) : Connect accRef from abc instead of seq. Note that connection from seq at previous r
+* (hrpsys_config, Stabilzier, AutoBalancer) : Use contactStates in Stabilizer to specify single support ph
+* (hrpsys_config.py, Stabilizer.*) : Add out data ports for Stabilizer debug
+* (KalmanFilter.cpp) : Use accRef compensation
+* supports SLIDE_JOINT in GLlink::setQ()
+* (PDcontroller,...) : Add PD controller and examples
+* (samplerobot*.py) : Add print message and comments to samples, remove direct writing of getRTCList, and 
+* (samplerobot*, samples/SampleRobot/CMakeLists.txt) : Use .in file to specify openhrp3 directory for sample1.wrl model
+* (samplerobot.launch) : Add conf_file setting to samplerobot.launch by copying hrpsys_tools/hrpsys/hrpsys.launch setting
+* (samplerobot-impedance-controller.py) : Add impedancecontroller example
+* (Stabilizer) : Fix transition between MODE_AIR, MODE_IDLE, and MODE_ST. Set MODE_AIR if startStabilizer 
+* (Stabilizer) : Fix USE_IMU_STATEFEEDBACK to USE_EEFM_STABILIZER for switching stabilizer algorithm and f
+* (Stabilizer.cpp) : Add LPF for ground contact checking
+* (Stabilizer.cpp) : Fix transition between st ON mode and st OFF mode
+* (Stabilizer.cpp) : Rotate robot around COG in rpy control
+* (Stabilizer.cpp) : Support rotational walking by fixing ref force and ref moment coordinates
+* (Stabilizer.*) : Update calculation of actual and reference values for Stabilizer
+* (Stabilizer.cpp) : Check legged robot or not
+* (Stabilizer.*) : Add getActualParameters and update to use it
+* (Stabilizer.*) : Update member variables (rename and remove)
+* (StabilizerService.idl, Stabilizer.*) : Fix idl to specify zmp delay time constant and auxiliary zmp inp
+* (Sample6dofRobot) : Add sample6dofrobot VRML which has 3 slide joints and 3 rotate joints. Add example f
+* RangeNoiseMixer added
+* rtc/DataLogger/DataLogger.cpp rtc/DataLogger/DataLogger.h: remove needless variable tm from member metho
+* (catkin.cmake, CMakeLists, samples/samplerobot*) : Move samplerobot examples to hrpsys-base https://github.com/fkanehiro/hrpsys-base/pull/252
+* Contributors: Shunichi Nozawa, Kunio Kojima, Isaac IY Saito
+
 315.2.3 (2014-07-28)
 --------------------
 * Adjusted to OpenRTM 1.1.1
 * use OCTOMAP_LIBRARY_DIRS instead of OCTOMAP_DIR, Fix #258
 * Use boost library for copysign because copysign in cmath only can be used in C++11 later
 * samplerobot
+
   * Add example for impedancecontroller rtc. 
   * Add examples for samplerobot by copying from start-jsk/hrpsys/samples discussed in https://github.com/fkanehiro/hrpsys-base/issues/240. 
   * Add setFootSteps examples. 
@@ -16,22 +50,27 @@ Changelog for package hrpsys
 * (JointPathEx.*, AutoBalancer, Stabilizer, ImpedanceController) : Remove solveLimbIK and use calcInverseKinematics2Loop
 * (samplerobot_auto_balancer.py, AutoBalancer.cpp) Fix overwriting of target foot coords, add example to check non-default stride stopping, and check RECTANGLE swing orbit
 * JointPathEx.*
+
   * Move nullspace codes to reduce difference between calcInverseKinematics2Loop and solveLimbIK. 
   * Remove unnecessary transition_count and resetting of nullspace vector. 
   * Move nullspace codes to reduce difference between calcInverseKinematics2Loop and solveLimbIK.
 * hrpsys_config.py
+
   * Add readDigitalOutput.
   * Add connection for st qCurrent. 
   * Add comment upon setTargetPose IK failure. 
   * Add logger connection for walking RTCs. 
-  Use Group to find eef name. PEP8 improvement.
+  * Use Group to find eef name. PEP8 improvement.
 * Stabilizer.*
+
   * Add new stabilizer control law (currently not enabled). 
   * Use :end_effector instead of link origin in IK and fix mode transition.
   * Add getParameter function for stabilizer parameter
 * create_changelog.sh
+
   * Add script for changelog from subdirectory information (discussed in `jsk-ros-pkg/jsk_roseus#134 <https://github.com/jsk-ros-pkg/jsk_roseus/issues/134>`_)
 * GaitGenerator.*
+
   * Fix bug of swing foot calculation and add reset orbit
   * Support rectangle foot swing orbit
 * (AutoBalancerService.idl, AutoBalancer.*, GaitGenerator.*, testGaitGenerator) : Enable to configure swing orbit type
