@@ -1,14 +1,14 @@
 // -*- C++ -*-
 /*!
- * @file  VideoCapture.h
- * @brief video capture component
+ * @file  AccelerationChecker.h
+ * @brief joint acceleration checker
  * @date  $Date$
  *
  * $Id$
  */
 
-#ifndef VIDEO_CAPTURE_H
-#define VIDEO_CAPTURE_H
+#ifndef ACCELERATION_CHECKER_H
+#define ACCELERATION_CHECKER_H
 
 #include <rtm/Manager.h>
 #include <rtm/DataFlowComponentBase.h>
@@ -16,12 +16,9 @@
 #include <rtm/DataInPort.h>
 #include <rtm/DataOutPort.h>
 #include <rtm/idl/BasicDataTypeSkel.h>
-#include "Img.hh"
-#include "camera.h"
 
 // Service implementation headers
 // <rtc-template block="service_impl_h">
-#include "CameraCaptureService_impl.h"
 
 // </rtc-template>
 
@@ -35,7 +32,7 @@ using namespace RTC;
 /**
    \brief sample RT component which has one data input port and one data output port
  */
-class VideoCapture
+class AccelerationChecker
   : public RTC::DataFlowComponentBase
 {
  public:
@@ -43,11 +40,11 @@ class VideoCapture
      \brief Constructor
      \param manager pointer to the Manager
   */
-  VideoCapture(RTC::Manager* manager);
+  AccelerationChecker(RTC::Manager* manager);
   /**
      \brief Destructor
   */
-  virtual ~VideoCapture();
+  virtual ~AccelerationChecker();
 
   // The initialize action (on CREATED->ALIVE transition)
   // formaer rtc_init_entry()
@@ -59,7 +56,7 @@ class VideoCapture
 
   // The startup action when ExecutionContext startup
   // former rtc_starting_entry()
-  virtual RTC::ReturnCode_t onStartup(RTC::UniqueId ec_id);
+  // virtual RTC::ReturnCode_t onStartup(RTC::UniqueId ec_id);
 
   // The shutdown action when ExecutionContext stop
   // former rtc_stopping_entry()
@@ -97,10 +94,6 @@ class VideoCapture
   // no corresponding operation exists in OpenRTm-aist-0.2.0
   // virtual RTC::ReturnCode_t onRateChanged(RTC::UniqueId ec_id);
 
-    void capture();
-  void take_one_frame();
-  void start_continuous();
-  void stop_continuous();
 
  protected:
   // Configuration variable declaration
@@ -108,17 +101,17 @@ class VideoCapture
   
   // </rtc-template>
 
+  TimedDoubleSeq m_q;
+
   // DataInPort declaration
   // <rtc-template block="inport_declare">
+  InPort<TimedDoubleSeq> m_qIn;
   
   // </rtc-template>
 
   // DataOutPort declaration
   // <rtc-template block="outport_declare">
-  Img::TimedMultiCameraImage m_MultiCameraImages;
-  OutPort<Img::TimedMultiCameraImage> m_MultiCameraImagesOut;
-  Img::TimedCameraImage m_CameraImage;
-  OutPort<Img::TimedCameraImage> m_CameraImageOut;
+  OutPort<TimedDoubleSeq> m_qOut;
   
   // </rtc-template>
 
@@ -129,30 +122,25 @@ class VideoCapture
 
   // Service declaration
   // <rtc-template block="service_declare">
-  RTC::CorbaPort m_CameraCaptureServicePort;
   
   // </rtc-template>
 
   // Consumer declaration
   // <rtc-template block="consumer_declare">
-  CameraCaptureService_impl m_CameraCaptureService;
   
   // </rtc-template>
 
  private:
-  typedef enum {SLEEP, ONESHOT, CONTINUOUS} mode;
-  mode m_mode;
-  std::string m_initialMode;
-  std::vector<int> m_devIds;
-  std::vector < v4l_capture * > m_cameras;
-  int m_width, m_height, m_frameRate;
-  double m_tOld;
+  TimedDoubleSeq m_dq, m_qOld, m_dqOld;
+  double m_thd;
+  double m_dt;
+  int dummy;
 };
 
 
 extern "C"
 {
-  void VideoCaptureInit(RTC::Manager* manager);
+  void AccelerationCheckerInit(RTC::Manager* manager);
 };
 
-#endif // VIDEO_CAPTURE_H
+#endif // ACCELERATION_CHECKER_H
