@@ -1,3 +1,24 @@
+## hrpsys (indigo) - 315.2.8-3
+
+The packages in the `hrpsys` repository were released into the `indigo` distro by running `/usr/bin/bloom-release hrpsys --track indigo --rosdistro indigo` on `Tue, 27 Jan 2015 13:40:15 -0000`
+
+The `hrpsys` package was released.
+
+Version of package(s) in repository `hrpsys`:
+- upstream repository: https://github.com/fkanehiro/hrpsys-base.git
+- release repository: https://github.com/tork-a/hrpsys-release.git
+- rosdistro version: `315.2.8-2`
+- old version: `315.2.8-2`
+- new version: `315.2.8-3`
+
+Versions of tools used:
+- bloom version: `0.5.16`
+- catkin_pkg version: `0.2.6`
+- rosdep version: `0.11.0`
+- rosdistro version: `0.4.0`
+- vcstools version: `0.1.36`
+
+
 ## hrpsys (indigo) - 315.2.8-2
 
 The packages in the `hrpsys` repository were released into the `indigo` distro by running `/usr/bin/bloom-release hrpsys --rosdistro indigo --track indigo` on `Sat, 10 Jan 2015 04:30:59 -0000`
