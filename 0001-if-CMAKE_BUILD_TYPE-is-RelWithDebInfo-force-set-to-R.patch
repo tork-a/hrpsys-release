@@ -1,4 +1,4 @@
-From 7b2701cef2d7a78014d4a021150f389dea2ad6bb Mon Sep 17 00:00:00 2001
+From f4da2a9c8497b434e28145f6d8850d53b743c350 Mon Sep 17 00:00:00 2001
 From: Kei Okada <kei.okada@gmail.com>
 Date: Tue, 27 Jan 2015 22:38:00 +0900
 Subject: [PATCH] if CMAKE_BUILD_TYPE is RelWithDebInfo, force set to Release
