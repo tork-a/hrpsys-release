@@ -1,0 +1,214 @@
+/**
+ * @file AutoBalancerService.idl
+ * @brief Services for the autobalancer interface
+ */
+//#include "OpenHRPCommon.idl"
+module OpenHRP
+{
+  
+  interface AutoBalancerService
+  {
+    typedef sequence<double, 3> DblSequence3;
+    //typedef sequence<double, 4> DblSequence4;
+    typedef double DblArray3[3];
+    typedef double DblArray4[4];
+
+    /**
+     * @struct Footstep
+     * @brief Foot step for one leg.
+     */
+    struct Footstep
+    {
+      /// Foot position [m]
+      DblArray3 pos;
+      /// Foot orientation by quaternion (w,x,y,z)
+      DblArray4 rot;
+      /// Leg name (rleg or lleg)
+      string leg;
+    };
+
+    /**
+     * @struct FootstepSequence
+     * @brief Sequence of foot step.
+     */
+    typedef sequence<Footstep> FootstepSequence;
+
+    /**
+     * @enum SupportLegState
+     * @brief State of support leg.
+     */
+    enum SupportLegState {
+      RLEG,
+      LLEG,
+      BOTH
+    };
+
+    /**
+     * @enum OrbitType
+     * @brief Orbit type of swing foot.
+     */
+    enum OrbitType {
+      SHUFFLING,
+      CYCLOID,
+      RECTANGLE,
+      STAIR
+    };
+
+    /**
+     * @enum ControllerMode
+     * @brief Mode of controller
+     */
+    enum ControllerMode {
+      MODE_IDLE,
+      MODE_ABC,
+      MODE_SYNC_TO_IDLE,
+      MODE_SYNC_TO_ABC
+    };
+
+    /**
+     * @struct FootstepParam
+     * @brief Foot step parameters.
+     */
+    struct FootstepParam
+    {
+      /// Current right foot coords
+      Footstep rleg_coords;
+      /// Current left foot coords
+      Footstep lleg_coords;
+      /// Support foot coords
+      Footstep support_leg_coords;
+      /// Swing foot coords, which is interpolation betwee swing_leg_src_coords and swing_leg_dst_coords
+      Footstep swing_leg_coords;
+      /// Source coords for swing foot
+      Footstep swing_leg_src_coords;
+      /// Destination coords for swing foot
+      Footstep swing_leg_dst_coords;
+      /// Destination foot midcoords
+      Footstep dst_foot_midcoords;
+      /// RLEG or LLEG
+      SupportLegState support_leg;
+      /// RLEG, LLEG, or BOTH
+      SupportLegState support_leg_with_both;
+    };
+
+    typedef sequence<string> StrSequence;
+
+    /**
+     * @struct GaitGeneratorParam
+     * @brief Parameters for GaitGenerator.
+     */
+    struct GaitGeneratorParam
+    {
+      /// Step time [s]
+      double default_step_time;
+      /// Step height [m]
+      double default_step_height;
+      /// Ratio of double support period. Ratio is included in (0, 1). Double support period time is default_double_support_ratio*default_step_time.
+      double default_double_support_ratio;
+      /// Stride limitation of forward x[m], y[m], theta[deg], and backward x[m] for goPos
+      sequence<double, 4> stride_parameter;
+      /// Default OrbitType
+      OrbitType default_orbit_type;
+      /// Time offset [s] for swing trajectory by delay_hoffarbib_trajectory_generator.
+      double swing_trajectory_delay_time_offset;
+      /// Way point offset 3D vector [m] for stair_delay_hoffarbib_trajectory_generator.
+      DblArray3 stair_trajectory_way_point_offset;
+    };
+
+    /**
+     * @struct AutoBalancerParam
+     * @brief Parameters for AutoBalancer
+     */
+    struct AutoBalancerParam
+    {
+      /// ZMP offset vectors[m] for rleg and lleg (<-please set by this order)
+      sequence<DblSequence3, 2> default_zmp_offsets;
+      double move_base_gain;
+      ControllerMode controller_mode;
+    };
+
+    /**
+     * @brief Walk to the goal position and orientation. Returns without waiting for whole steps to be executed.
+     * @param i_x[m], i_y[m], and i_th[deg] are goal x-y-position and z-orientation from the current mid-coords of right foot and left foot.
+     * @return true if set successfully, false otherwise
+     */
+    boolean goPos(in double x, in double y, in double th);
+
+    /**
+     * @brief Walk at the desired velocity. If the robot is stopping, the robot starts stepping. Returns without waiting for whole steps to be executed.
+     * @param i_vx[m/s], i_vy[m/s], and i_vth[deg/s] are velocity in the current mid-coords of right foot and left foot.
+     * @return true if set successfully, false otherwise
+     */
+    boolean goVelocity(in double vx, in double vy, in double vth);
+
+    /**
+     * @brief Stop stepping.
+     * @param
+     * @return true if set successfully, false otherwise
+     */
+    boolean goStop();
+
+    /**
+     * @brief Set footsteps. Returns without waiting for whole steps to be executed.
+     * @param fs is sequence of FootStep structure.
+     * @return true if set successfully, false otherwise
+     */
+    boolean setFootSteps(in FootstepSequence fs);
+
+    /**
+     * @brief Wait for whole footsteps are executed.
+     * @param
+     * @return true if set successfully, false otherwise
+     */
+    void waitFootSteps();
+
+    /**
+     * @brief Start AutoBalancer mode in which the robot controls the COM.
+     * @param limbs is sequence of limbs to fix. limbs are :rleg, :lleg, :rarm, and :larm
+     * @return true if set successfully, false otherwise
+     */
+    boolean startAutoBalancer(in StrSequence limbs);
+
+    /**
+     * @brief Stop AutoBalancer mode.
+     * @param
+     * @return true if set successfully, false otherwise
+     */
+    boolean stopAutoBalancer();
+
+    /**
+     * @brief Set GaitGenerator parameters
+     * @param i_param is input parameter
+     * @return true if set successfully, false otherwise
+     */
+    boolean setGaitGeneratorParam(in GaitGeneratorParam i_param);
+
+    /**
+     * @brief Get GaitGenerator parameters.
+     * @param i_param is output parameters
+     * @return true if set successfully, false otherwise
+     */
+    boolean getGaitGeneratorParam(out GaitGeneratorParam i_param);
+
+    /**
+     * @brief Set AutoBalancer parameters
+     * @param i_param is input parameter
+     * @return true if set successfully, false otherwise
+     */
+    boolean setAutoBalancerParam(in AutoBalancerParam i_param);
+
+    /**
+     * @brief Get AutoBalancer parameters.
+     * @param i_param is output parameters
+     * @return true if set successfully, false otherwise
+     */
+    boolean getAutoBalancerParam(out AutoBalancerParam i_param);
+
+    /**
+     * @brief Get footstep parameters.
+     * @param i_param is output parameters
+     * @return true if set successfully, false otherwise
+     */
+    boolean getFootstepParam(out FootstepParam i_param);
+  };
+};
