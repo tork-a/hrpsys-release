@@ -1,6 +1,6 @@
 <package>
   <name>hrpsys</name>
-  <version>315.2.7</version>
+  <version>315.2.8</version>
   <description>
    <p>An <a href = "http://www.openrtm.org/pub/OpenRTM-aist/">OpenRTM-aist</a>-based robot controller. This package is the most tailored for humanoid (dual-arm and/or biped) robots for historical reason.</p>
    <p>hrpsys package does not only wraps but build and installs the code from its mainstream repository (<a href = "https://github.com/fkanehiro/hrpsys-base/">github.com/fkanehiro/hrpsys-base</a>).</p>
@@ -25,7 +25,8 @@
   <url type="repository">https://github.com/fkanehiro/hrpsys-base/</url>
   <url type="bugtracker">https://github.com/fkanehiro/hrpsys-base/issues</url>
 
-  <buildtool_depend>catkin</buildtool_depend>
+  <buildtool_depend>cmake</buildtool_depend>
+  <buildtool_depend>pkg-config</buildtool_depend>
 
   <build_depend>cv_bridge</build_depend>
   <build_depend>doxygen</build_depend>
@@ -39,10 +40,6 @@
   <build_depend>mk</build_depend>
   <build_depend>openhrp3</build_depend>
   <build_depend>python-tk</build_depend>
-  <build_depend>rosbash</build_depend> <!-- temporarily until openrtm_aist_core provides rosbash -->
-  <build_depend>rosbuild</build_depend>
-  <build_depend>roslang</build_depend>
-  <build_depend>rostest</build_depend>
   <build_depend>sdl</build_depend>
 
   <run_depend>cv_bridge</run_depend>
@@ -53,12 +50,11 @@
   <run_depend>libxmu-dev</run_depend>
   <run_depend>openhrp3</run_depend>
   <run_depend>python-tk</run_depend>
-  <run_depend>rosbash</run_depend> <!-- temporarily until openrtm_aist_core provides rosbash -->
   <run_depend>sdl</run_depend>
 
   <!-- <test_depend>openhrp3</test_depend> -->
-
   <export>
-    <python path="${prefix}/lib/python2.7/dist-packages"/>
+    <build_type>cmake</build_type>
   </export>
+
 </package>
