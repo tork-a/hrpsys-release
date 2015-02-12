@@ -1,8 +1,8 @@
-From f4da2a9c8497b434e28145f6d8850d53b743c350 Mon Sep 17 00:00:00 2001
+From 403b89db14832e04011cfd02aa59b99122090a41 Mon Sep 17 00:00:00 2001
 From: Kei Okada <kei.okada@gmail.com>
 Date: Tue, 27 Jan 2015 22:38:00 +0900
-Subject: [PATCH] if CMAKE_BUILD_TYPE is RelWithDebInfo, force set to Release
- for install
+Subject: [PATCH 1/2] if CMAKE_BUILD_TYPE is RelWithDebInfo, force set to
+ Release for install
 
 ---
  CMakeLists.txt | 2 +-
