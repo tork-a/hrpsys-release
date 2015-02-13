@@ -69,7 +69,7 @@ if(COMPILE_JAVA_STUFF)
   set(javac_flags -target ${Java_VERSION_MAJOR}.${Java_VERSION_MINOR} -d . -sourcepath src)
 endif()
 
-if(NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL None OR CMAKE_BUILD_TYPE STREQUAL RelWithDebInfo)
+if(NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL None)
   set(
     CMAKE_BUILD_TYPE Release CACHE STRING
     "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel."
@@ -195,8 +195,4 @@ foreach(target \${targets})
 endforeach()")
   install(DIRECTORY test launch DESTINATION share/hrpsys USE_SOURCE_PERMISSIONS)
   install(DIRECTORY rtc ec DESTINATION share/hrpsys/src USE_SOURCE_PERMISSIONS)
-  install(CODE "
-execute_process(COMMAND cmake -E make_directory share WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
-execute_process(COMMAND cmake -E create_symlink ../../hrpsys share/hrpsys WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
-")
 endif()
