@@ -1,0 +1,25 @@
+From 42160d08c590b172e4932afdd9e8b5fd12a92a68 Mon Sep 17 00:00:00 2001
+From: Kei Okada <kei.okada@gmail.com>
+Date: Fri, 13 Feb 2015 12:47:44 +0900
+Subject: [PATCH 2/2] create symlink for backword compatibility
+
+---
+ CMakeLists.txt | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index d7c6423..44a72d7 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -195,4 +195,8 @@ foreach(target \${targets})
+ endforeach()")
+   install(DIRECTORY test launch DESTINATION share/hrpsys USE_SOURCE_PERMISSIONS)
+   install(DIRECTORY rtc ec DESTINATION share/hrpsys/src USE_SOURCE_PERMISSIONS)
++  install(CODE "
++execute_process(COMMAND cmake -E make_directory share WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
++execute_process(COMMAND cmake -E create_symlink ../../hrpsys share/hrpsys WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
++")
+ endif()
+-- 
+1.9.1
+
