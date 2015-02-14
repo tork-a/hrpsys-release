@@ -1,0 +1,103 @@
+From b196098eeaecbbba0d18057626ad6fcd739848ae Mon Sep 17 00:00:00 2001
+From: Kei Okada <kei.okada@gmail.com>
+Date: Sat, 14 Feb 2015 05:18:06 -0800
+Subject: [PATCH 4/4] fix for latest CMakeList.txt
+
+---
+ CMakeLists.txt          |    9 +++++----
+ idl/CMakeLists.txt      |   25 ++++++++++++++++++++++---
+ python/hrpsys_config.py |    8 +-------
+ 3 files changed, 28 insertions(+), 14 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 111c3b2..acd7997 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -144,7 +144,7 @@ execute_process(
+   COMMAND python -c "from distutils import sysconfig; print sysconfig.get_config_var(\"VERSION\")"
+   OUTPUT_VARIABLE PYTHON_VERSION
+   OUTPUT_STRIP_TRAILING_WHITESPACE)
+-set(python_dist_pkg_dir ${CMAKE_INSTALL_PREFIX}/lib/python${PYTHON_VERSION}/dist-packages)
++set(python_dist_pkg_dir lib/python${PYTHON_VERSION}/dist-packages)
+ 
+ configure_file(hrpsys-base.pc.in ${CMAKE_CURRENT_BINARY_DIR}/hrpsys-base.pc @ONLY)
+ install(FILES
+@@ -172,7 +172,7 @@ add_subdirectory(sample)
+ add_subdirectory(test)
+ 
+ #if catkin environment
+-string(REGEX MATCH "catkin" need_catkin $ENV{_})
++string(REGEX MATCH "catkin" need_catkin "$ENV{_}")
+ if(need_catkin OR "${CATKIN_BUILD_BINARY_PACKAGE}")
+   install(FILES package.xml DESTINATION share/hrpsys/)
+   install(CODE "
+@@ -196,8 +196,9 @@ endforeach()")
+   install(DIRECTORY test launch DESTINATION share/hrpsys USE_SOURCE_PERMISSIONS)
+   install(DIRECTORY rtc ec DESTINATION share/hrpsys/src USE_SOURCE_PERMISSIONS)
+   install(CODE "
+-execute_process(COMMAND cmake -E make_directory share WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
+-execute_process(COMMAND cmake -E create_symlink ../../hrpsys share/hrpsys WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
++execute_process(COMMAND cmake -E make_directory share/hrpsys WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
++execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/idl     share/hrpsys/idl WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
++execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/samples share/hrpsys/samples WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
+ ")
+ endif()
+ string(REGEX MATCH "catkin" need_catkin "$ENV{_}")
+diff --git a/idl/CMakeLists.txt b/idl/CMakeLists.txt
+index d161549..882916d 100644
+--- a/idl/CMakeLists.txt
++++ b/idl/CMakeLists.txt
+@@ -121,9 +121,28 @@ foreach(_idl_file ${openhrp_idl_files})
+   endif()
+ endforeach()
+ 
+-install(CODE "execute_process(COMMAND omniidl -bpython -C${python_dist_pkg_dir}/hrpsys -I${OPENRTM_IDL_DIR} ${idl_files} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})")
+-install(CODE "execute_process(COMMAND omniidl -bpython -C${python_dist_pkg_dir}/hrpsys -I${OPENRTM_IDL_DIR} ${openhrp_idl_files} WORKING_DIRECTORY ${OPENHRP_IDL_DIR}/OpenHRP)")
+-install(CODE "execute_process(COMMAND python -m compileall . WORKING_DIRECTORY ${python_dist_pkg_dir}/hrpsys)")
++add_custom_command(
++  OUTPUT python_idl
++  COMMAND cmake -E make_directory python_idl)
++foreach(_idl_file ${idl_files})
++  get_filename_component(idl_basename ${_idl_file} NAME_WE)
++  add_custom_command(
++    OUTPUT ${idl_basename}_idl.py
++    COMMAND omniidl -bpython -Cpython_idl -I${OPENRTM_IDL_DIR} ${_idl_file}
++    DEPENDS ${_idl_file} python_idl)
++  list(APPEND python_compiled_files ${idl_basename}_idl.py)
++endforeach()
++foreach(_idl_file ${openhrp_idl_files})
++  get_filename_component(idl_basename ${_idl_file} NAME_WE)
++  add_custom_command(
++    OUTPUT ${idl_basename}_idl.py
++    COMMAND omniidl -bpython -Cpython_idl -I${OPENRTM_IDL_DIR} ${OPENHRP_IDL_DIR}/OpenHRP/${_idl_file}
++    DEPENDS ${OPENHRP_IDL_DIR}/OpenHRP/${_idl_file} python_idl)
++  list(APPEND python_compiled_files ${idl_basename}_idl.py)
++endforeach()
++add_custom_target(compile_python_idl_files ALL DEPENDS ${python_compiled_files})
++install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/python_idl/ DESTINATION ${python_dist_pkg_dir}/hrpsys)
++
+ install(FILES ${headers} DESTINATION include/hrpsys/idl)
+ install(FILES ${idl_files} DESTINATION share/hrpsys/idl)
+ 
+diff --git a/python/hrpsys_config.py b/python/hrpsys_config.py
+index 9f0a154..e241196 100755
+--- a/python/hrpsys_config.py
++++ b/python/hrpsys_config.py
+@@ -4,13 +4,7 @@ import os
+ import rtm
+ 
+ from rtm import *
+-import imp
+-try:
+-    imp.load_module('OpenHRP')
+-    from OpenHRP import *
+-except:
+-    from OpenHRP3 import * # for old OpenHRP3 (3.1.7)
+-from hrpsys import *  # load ModelLoader
++from OpenHRP import *
+ 
+ import socket
+ import time
+-- 
+1.7.9.5
+
