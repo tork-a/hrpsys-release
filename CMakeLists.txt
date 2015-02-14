@@ -144,7 +144,7 @@ execute_process(
   COMMAND python -c "from distutils import sysconfig; print sysconfig.get_config_var(\"VERSION\")"
   OUTPUT_VARIABLE PYTHON_VERSION
   OUTPUT_STRIP_TRAILING_WHITESPACE)
-set(python_dist_pkg_dir ${CMAKE_INSTALL_PREFIX}/lib/python${PYTHON_VERSION}/dist-packages)
+set(python_dist_pkg_dir lib/python${PYTHON_VERSION}/dist-packages)
 
 configure_file(hrpsys-base.pc.in ${CMAKE_CURRENT_BINARY_DIR}/hrpsys-base.pc @ONLY)
 install(FILES
@@ -172,7 +172,7 @@ add_subdirectory(sample)
 add_subdirectory(test)
 
 #if catkin environment
-string(REGEX MATCH "catkin" need_catkin $ENV{_})
+string(REGEX MATCH "catkin" need_catkin "$ENV{_}")
 if(need_catkin OR "${CATKIN_BUILD_BINARY_PACKAGE}")
   install(FILES package.xml DESTINATION share/hrpsys/)
   install(CODE "
@@ -196,8 +196,9 @@ endforeach()")
   install(DIRECTORY test launch DESTINATION share/hrpsys USE_SOURCE_PERMISSIONS)
   install(DIRECTORY rtc ec DESTINATION share/hrpsys/src USE_SOURCE_PERMISSIONS)
   install(CODE "
-execute_process(COMMAND cmake -E make_directory share WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
-execute_process(COMMAND cmake -E create_symlink ../../hrpsys share/hrpsys WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
+execute_process(COMMAND cmake -E make_directory share/hrpsys WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
+execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/idl     share/hrpsys/idl WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
+execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/samples share/hrpsys/samples WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
 ")
 endif()
 string(REGEX MATCH "catkin" need_catkin "$ENV{_}")
