@@ -5,6 +5,7 @@ import rtm
 
 from rtm import *
 from OpenHRP import *
+from hrpsys import *  # load ModelLoader
 
 import socket
 import time
