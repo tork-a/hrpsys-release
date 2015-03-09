@@ -19,11 +19,14 @@
 #include <hrpModel/Body.h>
 #include <hrpModel/ColdetLinkPair.h>
 #include <hrpModel/ModelLoaderUtil.h>
+#ifdef USE_HRPSYSUTIL
 #include "GLscene.h"
 #include "util/SDLUtil.h"
 #include "util/LogManager.h"
+#endif // USE_HRPSYSUTIL
 #include "TimedPosture.h"
 #include "interpolator.h"
+#include "HRPDataTypes.hh"
 
 #include "VclipLinkPair.h"
 #include "CollisionDetectorService_impl.h"
@@ -63,7 +66,7 @@ class CollisionDetector
 
   // The finalize action (on ALIVE->END transition)
   // formaer rtc_exiting_entry()
-  // virtual RTC::ReturnCode_t onFinalize();
+  virtual RTC::ReturnCode_t onFinalize();
 
   // The startup action when ExecutionContext startup
   // former rtc_starting_entry()
@@ -124,6 +127,8 @@ class CollisionDetector
   InPort<TimedDoubleSeq> m_qRefIn;
   TimedDoubleSeq m_qCurrent;
   InPort<TimedDoubleSeq> m_qCurrentIn;
+  OpenHRP::TimedLongSeqSeq m_servoState;
+  InPort<OpenHRP::TimedLongSeqSeq> m_servoStateIn;
   
   // </rtc-template>
 
@@ -164,10 +169,12 @@ class CollisionDetector
       hrp::Vector3 point0, point1;
       double distance;
   };
+#ifdef USE_HRPSYSUTIL
   CollisionDetectorComponent::GLscene m_scene;
   LogManager<TimedPosture> m_log; 
   SDLwindow m_window;
   GLbody *m_glbody;
+#endif // USE_HRPSYSUTIL
   std::vector<Vclip::Polyhedron *> m_VclipLinks;
   bool m_use_viewer;
   hrp::BodyPtr m_robot;
@@ -185,9 +192,13 @@ class CollisionDetector
   int default_recover_time;
   unsigned int m_debugLevel;
   bool m_enable;
+  int collision_beep_freq, collision_beep_count;
   OpenHRP::CollisionDetectorService::CollisionState m_state;
 };
 
+#ifndef USE_HRPSYSUTIL
+hrp::Link *hrplinkFactory();
+#endif // USE_HRPSYSUTIL
 
 extern "C"
 {
