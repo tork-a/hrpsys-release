@@ -1,10 +1,10 @@
-From c6738d8d32873d5408751a8a045068870c5267ef Mon Sep 17 00:00:00 2001
+From 93f98b9e72388ce0f463680bcddbe5fdba38a785 Mon Sep 17 00:00:00 2001
 From: Kei Okada <kei.okada@gmail.com>
 Date: Fri, 13 Feb 2015 12:48:50 +0900
 Subject: [PATCH 3/5] create symlink for backword compatibility
 
 ---
- CMakeLists.txt |    4 ++++
+ CMakeLists.txt | 4 ++++
  1 file changed, 4 insertions(+)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
@@ -21,5 +21,5 @@ index 4363862..98392cd 100644
 +")
  endif()
 -- 
-1.7.9.5
+1.9.1
 

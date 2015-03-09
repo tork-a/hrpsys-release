@@ -1,10 +1,10 @@
-From 2d84cafe3388977e3514bf79e0ff5321db9eeee3 Mon Sep 17 00:00:00 2001
+From a47d7767e6fe18de1e4afcc647a2e7a2673143e6 Mon Sep 17 00:00:00 2001
 From: Kei Okada <kei.okada@gmail.com>
 Date: Fri, 13 Feb 2015 19:49:45 +0900
 Subject: [PATCH 4/5] add .catkin to CMakeLists.txt
 
 ---
- CMakeLists.txt |   26 ++++++++++++++++++++++++++
+ CMakeLists.txt | 26 ++++++++++++++++++++++++++
  1 file changed, 26 insertions(+)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
@@ -42,5 +42,5 @@ index 98392cd..2740b98 100644
 +")
 +endif()
 -- 
-1.7.9.5
+1.9.1
 

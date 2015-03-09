@@ -1,12 +1,12 @@
-From 9139ef1234957eeffd9f98c5d7d23522ec4c31c7 Mon Sep 17 00:00:00 2001
+From 600a6d21812670d5cac325a153b966480d5b503f Mon Sep 17 00:00:00 2001
 From: Kei Okada <kei.okada@gmail.com>
 Date: Sat, 14 Feb 2015 05:17:15 -0800
 Subject: [PATCH 5/5] fix for latest CMakeList.txt
 
 ---
- CMakeLists.txt          |    9 +++++----
- idl/CMakeLists.txt      |   25 ++++++++++++++++++++++---
- python/hrpsys_config.py |    8 +-------
+ CMakeLists.txt          |  9 +++++----
+ idl/CMakeLists.txt      | 25 ++++++++++++++++++++++---
+ python/hrpsys_config.py |  8 +-------
  3 files changed, 28 insertions(+), 14 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
@@ -99,5 +99,5 @@ index 9f0a154..e241196 100755
  import socket
  import time
 -- 
-1.7.9.5
+1.9.1
 
