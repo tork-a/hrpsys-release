@@ -32,10 +32,10 @@ elseif(WIN32)
   set(SH_SFX "bat")
 endif()
 
-# OpenRTM-aist(>= 1.0.0)    
+# OpenRTM-aist(>= 1.0.0)
 find_package(OpenRTM REQUIRED)
-if(NOT OPENRTM_VERSION STREQUAL "1.1.1")
-add_definitions(-DOPENRTM_VERSION110)
+if(EXISTS "${OPENRTM_DIR}/include/openrtm-1.1/rtm/RTObjectStateMachine.h")
+add_definitions(-DOPENRTM_VERSION_TRUNK)
 endif()
 
 # OpenHRP
@@ -83,8 +83,8 @@ set(CPACK_PACKAGE_NAME hrpsys-base)
 set(CPACK_PACKAGE_VENDOR "AIST")
 set(CPACK_PACKAGE_CONTACT "Fumio Kanehiro <f-kanehiro@aist.go.jp>")
 set(CPACK_PACKAGE_VERSION_MAJOR 315)
-set(CPACK_PACKAGE_VERSION_MINOR 2)
-set(CPACK_PACKAGE_VERSION_PATCH 8)
+set(CPACK_PACKAGE_VERSION_MINOR 3)
+set(CPACK_PACKAGE_VERSION_PATCH 0)
 execute_process(
   COMMAND date +%Y%m%d%H%M
   OUTPUT_VARIABLE CPACK_PACKAGE_DATE
@@ -201,9 +201,9 @@ execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/idl     share/hr
 execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/samples share/hrpsys/samples WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
 ")
 endif()
-string(REGEX MATCH "catkin" need_catkin "$ENV{_}")
 if(need_catkin)
-  install(CODE "
+  install(CODE
+"
 ## this is tricky force write catkin marker file
 set(_catkin_marker_file \"\${CMAKE_INSTALL_PREFIX}/.catkin\")
 # check if the develspace marker file exists yet
@@ -221,7 +221,7 @@ if(EXISTS \${_catkin_marker_file})
   endif()
 else()
   # create a new develspace marker file
-  # NOTE: extra care must be taken when running multiple catkin jobs in parallel
+  # NOTE: extra care must be taken when running multiple catkin jobs in parallel 
   #       so that this does not overwrite the result of a similar call in another package
   file(WRITE \${_catkin_marker_file} \"${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}\")
 endif()

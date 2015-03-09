@@ -130,15 +130,28 @@ RTC::ReturnCode_t SequencePlayer::onInitialize()
 
     unsigned int dof = m_robot->numJoints();
 
+
+    // Setting for wrench data ports (real + virtual)
+    std::vector<std::string> fsensor_names;
+    //   find names for real force sensors
     int npforce = m_robot->numSensors(hrp::Sensor::FORCE);
-    m_wrenches.resize(npforce);
-    m_wrenchesOut.resize(npforce);
     for (unsigned int i=0; i<npforce; i++){
-      hrp::Sensor *s = m_robot->sensor(hrp::Sensor::FORCE, i);
-      m_wrenchesOut[i] = new OutPort<TimedDoubleSeq>(std::string(s->name+"Ref").c_str(), m_wrenches[i]);
+      fsensor_names.push_back(m_robot->sensor(hrp::Sensor::FORCE, i)->name);
+    }
+    //   find names for virtual force sensors
+    coil::vstring virtual_force_sensor = coil::split(prop["virtual_force_sensor"], ",");
+    int nvforce = virtual_force_sensor.size()/10;
+    for (unsigned int i=0; i<nvforce; i++){
+      fsensor_names.push_back(virtual_force_sensor[i*10+0]);
+    }
+    //   add ports for all force sensors
+    int nforce  = npforce + nvforce;
+    m_wrenches.resize(nforce);
+    m_wrenchesOut.resize(nforce);
+    for (unsigned int i=0; i<nforce; i++){
+      m_wrenchesOut[i] = new OutPort<TimedDoubleSeq>(std::string(fsensor_names[i]+"Ref").c_str(), m_wrenches[i]);
       m_wrenches[i].data.length(6);
-      registerOutPort(std::string(s->name+"Ref").c_str(), *m_wrenchesOut[i]);
-      std::cerr << s->name << std::endl;
+      registerOutPort(std::string(fsensor_names[i]+"Ref").c_str(), *m_wrenchesOut[i]);
     }
 
     if (prop.hasKey("seq_optional_data_dim")) {
@@ -147,7 +160,7 @@ RTC::ReturnCode_t SequencePlayer::onInitialize()
       optional_data_dim = 1;
     }
 
-    m_seq = new seqplay(dof, dt, npforce, optional_data_dim);
+    m_seq = new seqplay(dof, dt, nforce, optional_data_dim);
 
     m_qInit.data.length(dof);
     for (unsigned int i=0; i<dof; i++) m_qInit.data[i] = 0.0;
@@ -461,7 +474,7 @@ bool SequencePlayer::setTargetPose(const char* gname, const double *xyz, const d
     string base_parent_name = m_robot->joint(indices[0])->parent->name;
     string target_name = m_robot->joint(indices[indices.size()-1])->name;
     // prepare joint path
-    hrp::JointPathExPtr manip = hrp::JointPathExPtr(new hrp::JointPathEx(m_robot, m_robot->link(base_parent_name), m_robot->link(target_name)));
+    hrp::JointPathExPtr manip = hrp::JointPathExPtr(new hrp::JointPathEx(m_robot, m_robot->link(base_parent_name), m_robot->link(target_name), dt));
 
     // calc fk
     for (int i=0; i<m_robot->numJoints(); i++){
@@ -636,6 +649,7 @@ bool SequencePlayer::setInterpolationMode(OpenHRP::SequencePlayerService::interp
 
 bool SequencePlayer::addJointGroup(const char *gname, const OpenHRP::SequencePlayerService::StrSequence& jnames)
 {
+    std::cerr << "[addJointGroup] group name = " << gname << std::endl;
     if ( m_debugLevel > 0 ) {
         std::cerr << __PRETTY_FUNCTION__ << std::endl;
     }
@@ -657,6 +671,7 @@ bool SequencePlayer::addJointGroup(const char *gname, const OpenHRP::SequencePla
 
 bool SequencePlayer::removeJointGroup(const char *gname)
 {
+    std::cerr << "[removeJointGroup] group name = " << gname << std::endl;
     if (!waitInterpolationOfGroup(gname)) return false;
     bool ret;
     {
