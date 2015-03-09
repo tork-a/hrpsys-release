@@ -163,6 +163,7 @@ class Stabilizer
   RTC::TimedOrientation3D m_baseRpy;
   RTC::TimedBooleanSeq m_contactStates;
   RTC::TimedDoubleSeq m_controlSwingSupportTime;
+  RTC::TimedBooleanSeq m_actContactStates;
   // for debug ouput
   RTC::TimedPoint3D m_originRefZmp, m_originRefCog, m_originRefCogVel, m_originNewZmp;
   RTC::TimedPoint3D m_originActZmp, m_originActCog, m_originActCogVel;
@@ -185,6 +186,9 @@ class Stabilizer
   RTC::InPort<RTC::TimedOrientation3D> m_baseRpyIn;
   RTC::InPort<RTC::TimedBooleanSeq> m_contactStatesIn;
   RTC::InPort<RTC::TimedDoubleSeq> m_controlSwingSupportTimeIn;
+
+  std::vector<RTC::TimedDoubleSeq> m_wrenches;
+  std::vector<RTC::InPort<RTC::TimedDoubleSeq> *> m_wrenchesIn;
   
   // </rtc-template>
 
@@ -193,6 +197,7 @@ class Stabilizer
   RTC::OutPort<RTC::TimedDoubleSeq> m_qRefOut;
   RTC::OutPort<RTC::TimedDoubleSeq> m_tauOut;
   RTC::OutPort<RTC::TimedPoint3D> m_zmpOut;
+  RTC::OutPort<RTC::TimedBooleanSeq> m_actContactStatesOut;
   // for debug output
   RTC::OutPort<RTC::TimedPoint3D> m_originRefZmpOut, m_originRefCogOut, m_originRefCogVelOut, m_originNewZmpOut;
   RTC::OutPort<RTC::TimedPoint3D> m_originActZmpOut, m_originActCogOut, m_originActCogVelOut;
@@ -229,24 +234,27 @@ class Stabilizer
     ST_RIGHT = 1
   };
   struct ee_trans {
+    std::string target_name;
     hrp::Vector3 localp;
     hrp::Matrix33 localR;
   };
   enum cmode {MODE_IDLE, MODE_AIR, MODE_ST, MODE_SYNC_TO_IDLE, MODE_SYNC_TO_AIR} control_mode;
   // members
-  hrp::JointPathExPtr manip2[2];
+  std::vector<hrp::JointPathExPtr> jpe_v;
   hrp::BodyPtr m_robot;
   unsigned int m_debugLevel;
   hrp::dvector transition_joint_q, qorg, qrefv;
   std::vector<std::string> sensor_names;
-  std::map<std::string, ee_trans> ee_map;
+  std::vector<ee_trans> ee_vec;
   std::map<std::string, size_t> contact_states_index_map;
-  std::vector<bool> contact_states, prev_contact_states;
+  std::vector<bool> contact_states, prev_contact_states, is_ik_enable;
   double dt;
   int transition_count, loop;
   bool is_legged_robot, on_ground;
-  hrp::Vector3 current_root_p, target_foot_p[2], target_root_p;
-  hrp::Matrix33 current_root_R, target_root_R, target_foot_R[2], prev_act_foot_origin_rot, prev_ref_foot_origin_rot;
+  hrp::Vector3 current_root_p, target_root_p;
+  hrp::Matrix33 current_root_R, target_root_R, prev_act_foot_origin_rot, prev_ref_foot_origin_rot, target_foot_origin_rot;
+  std::vector <hrp::Vector3> target_ee_p, target_ee_diff_p;
+  std::vector <hrp::Matrix33> target_ee_R;
   rats::coordinates target_foot_midcoords;
   hrp::Vector3 ref_zmp, ref_cog, ref_cogvel, prev_ref_cog, prev_ref_zmp;
   hrp::Vector3 act_zmp, act_cog, act_cogvel, rel_act_zmp, prev_act_cog, prev_act_cogvel, act_base_rpy, current_base_rpy, current_base_pos;
@@ -263,11 +271,12 @@ class Stabilizer
   double rdx, rdy, rx, ry;
   // EEFM ST
   double eefm_k1[2], eefm_k2[2], eefm_k3[2], eefm_zmp_delay_time_const[2], eefm_body_attitude_control_gain[2], eefm_body_attitude_control_time_const[2];
-  double eefm_rot_damping_gain, eefm_rot_time_const, eefm_pos_damping_gain, eefm_pos_time_const_support, eefm_pos_time_const_swing, eefm_pos_transition_time, eefm_pos_margin_time, eefm_leg_inside_margin, eefm_leg_front_margin, eefm_leg_rear_margin, eefm_cogvel_cutoff_freq;
-  hrp::Vector3 d_foot_rpy[2], new_refzmp, rel_cog, ref_zmp_aux, ee_d_foot_rpy[2];
+  double eefm_rot_damping_gain, eefm_rot_time_const, eefm_pos_time_const_support, eefm_pos_time_const_swing, eefm_pos_transition_time, eefm_pos_margin_time, eefm_leg_inside_margin, eefm_leg_front_margin, eefm_leg_rear_margin, eefm_cogvel_cutoff_freq, eefm_wrench_alpha_blending;
+  hrp::Vector3 d_foot_rpy[2], new_refzmp, rel_cog, ref_zmp_aux, ee_d_foot_rpy[2], eefm_pos_damping_gain;
   hrp::Vector3 ref_foot_force[2];
   hrp::Vector3 ref_foot_moment[2];
-  double zctrl, total_mass, f_zctrl[2];
+  hrp::Vector3 d_foot_pos[2], pos_ctrl;
+  double total_mass;
 };
 
 
