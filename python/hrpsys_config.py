@@ -5,6 +5,7 @@ import rtm
 
 from rtm import *
 from OpenHRP import *
+from hrpsys import *  # load ModelLoader
 
 import socket
 import time
@@ -318,9 +319,9 @@ class HrpsysConfigurator:
                                                   self.fk.port("baseRpyRef")])
         connectPorts(self.sh.port("qOut"), self.seq.port("qInit"))
         connectPorts(self.sh.port("zmpOut"), self.seq.port("zmpRefInit"))
-        for sen in filter(lambda x: x.type == "Force", self.sensors):
-            connectPorts(self.seq.port(sen.name + "Ref"),
-                         self.sh.port(sen.name + "In"))
+        for sen in self.getForceSensorNames():
+            connectPorts(self.seq.port(sen + "Ref"),
+                         self.sh.port(sen + "In"))
 
         # connection for st
         if rtm.findPort(self.rh.ref, "lfsensor") and rtm.findPort(
@@ -339,10 +340,18 @@ class HrpsysConfigurator:
             connectPorts(self.abc.port("contactStates"), self.st.port("contactStates"))
             connectPorts(self.abc.port("controlSwingSupportTime"), self.st.port("controlSwingSupportTime"))
             connectPorts(self.rh.port("q"), self.st.port("qCurrent"))
-        if self.ic and self.abc:
-            for sen in filter(lambda x: x.type == "Force", self.sensors):
-                connectPorts(self.ic.port("ref_" + sen.name),
-                             self.abc.port("ref_" + sen.name))
+
+        # ref force moment connection
+        for sen in self.getForceSensorNames():
+            if self.st:
+                connectPorts(self.sh.port(sen + "Out"),
+                             self.st.port(sen + "Ref"))
+            if self.ic:
+                connectPorts(self.sh.port(sen+"Out"),
+                             self.ic.port("ref_" + sen+"In"))
+            if self.abc:
+                connectPorts(self.sh.port(sen+"Out"),
+                             self.abc.port("ref_" + sen))
 
         #  actual force sensors
         if self.rmfo:
@@ -355,9 +364,16 @@ class HrpsysConfigurator:
                 if self.ic:
                     connectPorts(self.rmfo.port("off_" + sen.name),
                                  self.ic.port(sen.name))
+        elif self.ic: # if the robot does not have rmfo and kf, but have ic
+            for sen in filter(lambda x: x.type == "Force", self.sensors):
+                connectPorts(self.rh.port(sen.name),
+                             self.ic.port(sen.name))
+
         # connection for ic
         if self.ic:
             connectPorts(self.rh.port("q"), self.ic.port("qCurrent"))
+            connectPorts(self.sh.port("basePosOut"), self.ic.port("basePosIn"))
+            connectPorts(self.sh.port("baseRpyOut"), self.ic.port("baseRpyIn"))
         # connection for tf
         if self.tf:
             # connection for actual torques
@@ -376,6 +392,8 @@ class HrpsysConfigurator:
         # connection for co
         if self.co:
             connectPorts(self.rh.port("q"), self.co.port("qCurrent"))
+            connectPorts(self.rh.port("servoState"), self.co.port("servoStateIn"))
+
 
         # connection for gc
         if self.gc:
@@ -483,8 +501,9 @@ class HrpsysConfigurator:
         if comp == None:
             print self.configurator_name, " Cannot find component: " + instanceName + " (" + compName + ")"
             return [None, None]
-        if comp.service("service0"):
-            comp_svc = narrow(comp.service("service0"), compName + "Service")
+        comp_svc_port = comp.service("service0")
+        if comp_svc_port:
+            comp_svc = narrow(comp_svc_port, compName + "Service")
             print self.configurator_name, " find CompSvc : ", instanceName + "_svc = ", comp_svc
             return [comp, comp_svc]
         else:
@@ -602,6 +621,16 @@ class HrpsysConfigurator:
                            filter(lambda x: len(x.sensors) > 0,
                                   self.getBodyInfo(url)._get_links())), [])  # sum is for list flatten
 
+    # public method to get sensors list
+    def getForceSensorNames(self):
+        '''!@brief
+        Get list of force sensor names. Returns existence force sensors and virtual force sensors. self.sensors and virtual force sensors are assumed.
+        '''
+        ret = map (lambda x : x.name, filter(lambda x: x.type == "Force", self.sensors))
+        if self.vs != None:
+            ret += filter(lambda x: str.find(x, 'v') >= 0 and str.find(x, 'sensor') >= 0, self.vs.ports.keys())
+        return ret
+
     def connectLoggerPort(self, artc, sen_name, log_name=None):
         '''!@brief
         Connect port to logger
@@ -675,6 +704,8 @@ class HrpsysConfigurator:
             self.connectLoggerPort(self.rh, 'emergencySignal',
                                    'emergencySignal')
             self.connectLoggerPort(self.rh, 'servoState')
+            if self.simulation_mode:
+                self.connectLoggerPort(self.rh, 'WAIST')
         for sen in filter(lambda x: x.type == "Force", self.sensors):
             self.connectLoggerPort(self.seq, sen.name + "Ref")
             self.connectLoggerPort(self.sh, sen.name + "Out")
@@ -707,7 +738,8 @@ class HrpsysConfigurator:
         timeout_count = 0
         # wait for simulator or RobotHardware setup which sometime takes a long time
         while self.rh == None and timeout_count < 10:  # <- time out limit
-            time.sleep(1);
+            if timeout_count > 0: # do not sleep initial loop
+                time.sleep(1);
             self.rh = rtm.findRTC("RobotHardware0")
             if not self.rh:
                 self.rh = rtm.findRTC(robotname)
@@ -845,9 +877,8 @@ class HrpsysConfigurator:
         @param gname str: Name of the joint group.
         @param pose list of float: list of positions and orientations
         @param tm float: Time to complete.
-        @param wait bool: If true, SequencePlayer.waitInterpolationOfGroup gets run.
-                  (TODO: Elaborate what this means...Even after having taken
-                  a look at its source code I can't tell exactly what it means)
+        @param wait bool: If true, all other subsequent commands wait until
+                          the movement commanded by this method call finishes.
         '''
         angles = [x / 180.0 * math.pi for x in pose]
         ret = self.seq_svc.setJointAnglesOfGroup(gname, angles, tm)
@@ -1173,7 +1204,8 @@ dr=0, dp=0, dw=0, tm=10, wait=True):
         @param dp float: In radian.
         @param dw float: In radian.
         @param tm float: Second to complete.
-        @param wait bol: If true, SequencePlayer.waitInterpolationOfGroup gets run.
+        @param wait bool: If true, all other subsequent commands wait until
+                          the movement commanded by this method call finishes.
         @return bool: False if unreachable.
         '''
         self.waitInterpolationOfGroup(gname)
@@ -1428,6 +1460,8 @@ tds.data[4:7], tds.data[8:11]], 'sxyz'))
         Check whether servo control has been turned on.
         @param jname str: Name of a link (that can be obtained by "hiro.Groups"
                       as lists of groups).
+                      When jname = 'all' or 'any' => If all joints are servoOn, return True, otherwise, return False.
+                      When jname = 'some' => If some joint is servoOn, return True, otherwise return False.
         @return bool: True if servo is on
         '''
         if self.simulation_mode:
@@ -1439,13 +1473,20 @@ tds.data[4:7], tds.data[8:11]], 'sxyz'))
                     # print self.configurator_name, 's = ', s
                     if (s[0] & 2) == 0:
                         return False
+                return True
+            elif jname.lower() == 'some':
+                for s in s_s:
+                    # print self.configurator_name, 's = ', s
+                    if (s[0] & 2) != 0:
+                        return True
+                return False
             else:
                 jid = eval('self.' + jname)
                 print self.configurator_name, s_s[jid]
                 if s_s[jid][0] & 1 == 0:
                     return False
-            return True
-        return False
+                else:
+                    return True
 
     def flat2Groups(self, flatList):
         '''!@brief
@@ -1646,6 +1687,34 @@ tds.data[4:7], tds.data[8:11]], 'sxyz'))
         @return bool:
         '''
         return self.seq_svc.playPatternOfGroup(gname, jointangles, tm)
+
+    # #
+    # # service interface for Unstable RTC component
+    # #
+    def startAutoBalancer(self, limbs=["rleg", "lleg"]):
+        '''!@brief
+        Start AutoBalancer mode
+        @param limbs list of end-effector name to control. rleg and lleg by default.
+        '''
+        self.abc_svc.startAutoBalancer(limbs)
+
+    def stopAutoBalancer(self):
+        '''!@brief
+        Stop AutoBalancer mode
+        '''
+        self.abc_svc.stopAutoBalancer()
+
+    def startStabilizer(self):
+        '''!@brief
+        Start Stabilzier mode
+        '''
+        self.st_svc.startStabilizer()
+
+    def stopStabilizer(self):
+        '''!@brief
+        Stop Stabilzier mode
+        '''
+        self.st_svc.stopStabilizer()
 
     # ##
     # ## initialize
