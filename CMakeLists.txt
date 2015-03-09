@@ -32,10 +32,10 @@ elseif(WIN32)
   set(SH_SFX "bat")
 endif()
 
-# OpenRTM-aist(>= 1.0.0)    
+# OpenRTM-aist(>= 1.0.0)
 find_package(OpenRTM REQUIRED)
-if(NOT OPENRTM_VERSION STREQUAL "1.1.1")
-add_definitions(-DOPENRTM_VERSION110)
+if(EXISTS "${OPENRTM_DIR}/include/openrtm-1.1/rtm/RTObjectStateMachine.h")
+add_definitions(-DOPENRTM_VERSION_TRUNK)
 endif()
 
 # OpenHRP
@@ -69,7 +69,7 @@ if(COMPILE_JAVA_STUFF)
   set(javac_flags -target ${Java_VERSION_MAJOR}.${Java_VERSION_MINOR} -d . -sourcepath src)
 endif()
 
-if(NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL None)
+if(NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL None OR CMAKE_BUILD_TYPE STREQUAL RelWithDebInfo)
   set(
     CMAKE_BUILD_TYPE Release CACHE STRING
     "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel."
@@ -83,8 +83,8 @@ set(CPACK_PACKAGE_NAME hrpsys-base)
 set(CPACK_PACKAGE_VENDOR "AIST")
 set(CPACK_PACKAGE_CONTACT "Fumio Kanehiro <f-kanehiro@aist.go.jp>")
 set(CPACK_PACKAGE_VERSION_MAJOR 315)
-set(CPACK_PACKAGE_VERSION_MINOR 2)
-set(CPACK_PACKAGE_VERSION_PATCH 8)
+set(CPACK_PACKAGE_VERSION_MINOR 3)
+set(CPACK_PACKAGE_VERSION_PATCH 0)
 execute_process(
   COMMAND date +%Y%m%d%H%M
   OUTPUT_VARIABLE CPACK_PACKAGE_DATE
@@ -144,7 +144,7 @@ execute_process(
   COMMAND python -c "from distutils import sysconfig; print sysconfig.get_config_var(\"VERSION\")"
   OUTPUT_VARIABLE PYTHON_VERSION
   OUTPUT_STRIP_TRAILING_WHITESPACE)
-set(python_dist_pkg_dir ${CMAKE_INSTALL_PREFIX}/lib/python${PYTHON_VERSION}/dist-packages)
+set(python_dist_pkg_dir lib/python${PYTHON_VERSION}/dist-packages)
 
 configure_file(hrpsys-base.pc.in ${CMAKE_CURRENT_BINARY_DIR}/hrpsys-base.pc @ONLY)
 install(FILES
@@ -172,7 +172,7 @@ add_subdirectory(sample)
 add_subdirectory(test)
 
 #if catkin environment
-string(REGEX MATCH "catkin" need_catkin $ENV{_})
+string(REGEX MATCH "catkin" need_catkin "$ENV{_}")
 if(need_catkin OR "${CATKIN_BUILD_BINARY_PACKAGE}")
   install(FILES package.xml DESTINATION share/hrpsys/)
   install(CODE "
@@ -195,4 +195,35 @@ foreach(target \${targets})
 endforeach()")
   install(DIRECTORY test launch DESTINATION share/hrpsys USE_SOURCE_PERMISSIONS)
   install(DIRECTORY rtc ec DESTINATION share/hrpsys/src USE_SOURCE_PERMISSIONS)
+  install(CODE "
+execute_process(COMMAND cmake -E make_directory share/hrpsys WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
+execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/idl     share/hrpsys/idl WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
+execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/samples share/hrpsys/samples WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
+")
+endif()
+if(need_catkin)
+  install(CODE
+"
+## this is tricky force write catkin marker file
+set(_catkin_marker_file \"\${CMAKE_INSTALL_PREFIX}/.catkin\")
+# check if the develspace marker file exists yet
+if(EXISTS \${_catkin_marker_file})
+  file(READ \${_catkin_marker_file} _existing_sourcespaces)
+  if(_existing_sourcespaces STREQUAL \"\")
+    # write this sourcespace to the marker file
+    file(WRITE \${_catkin_marker_file} \"${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}\")
+  else()
+    # append to existing list of sourcespaces if it's not in the list
+    list(FIND _existing_sourcespaces \"${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}\" _existing_sourcespace_index)
+    if(_existing_sourcespace_index EQUAL -1)
+      file(APPEND \${_catkin_marker_file} \";${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}\")
+    endif()
+  endif()
+else()
+  # create a new develspace marker file
+  # NOTE: extra care must be taken when running multiple catkin jobs in parallel 
+  #       so that this does not overwrite the result of a similar call in another package
+  file(WRITE \${_catkin_marker_file} \"${CMAKE_INSTALL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}\")
+endif()
+")
 endif()
