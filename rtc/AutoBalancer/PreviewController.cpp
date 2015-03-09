@@ -20,16 +20,17 @@ void preview_control_base<dim>::update_x_k(const hrp::Vector3& pr)
   if ( is_doing() ) calc_x_k();
 }
 
-template <std::size_t dim>
-void preview_control_base<dim>::update_zc(double zc)
-{
-  riccati.c(0, 2) = - zc / g; 
-  riccati.solve();
-}
+// template <std::size_t dim>
+// void preview_control_base<dim>::update_zc(double zc)
+// {
+//   riccati.c(0, 2) = - zc / gravitational_acceleration; 
+//   riccati.solve();
+// }
 
 void preview_control::calc_f()
 {
   f.resize(delay+1);
+  f(0)=0;
   Eigen::Matrix<double, 1, 1> fa;
   hrp::Matrix33 gsi(hrp::Matrix33::Identity());
   for (size_t i = 0; i < delay; i++) {
@@ -56,6 +57,7 @@ void preview_control::calc_x_k()
 void extended_preview_control::calc_f()
 {
   f.resize(delay + 1);
+  f(0)=0;
   Eigen::Matrix<double, 1, 1> fa;
   Eigen::Matrix<double, 4, 4> gsi(Eigen::Matrix<double, 4, 4>::Identity());
   Eigen::Matrix<double, 4, 1> qt(riccati.Q * riccati.c.transpose());
