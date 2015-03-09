@@ -113,6 +113,8 @@ module OpenHRP
       double swing_trajectory_delay_time_offset;
       /// Way point offset 3D vector [m] for stair_delay_hoffarbib_trajectory_generator.
       DblArray3 stair_trajectory_way_point_offset;
+      /// Gravitational acceleration [m/s^2]
+      double gravitational_acceleration;
     };
 
     /**
@@ -125,6 +127,11 @@ module OpenHRP
       sequence<DblSequence3, 2> default_zmp_offsets;
       double move_base_gain;
       ControllerMode controller_mode;
+      boolean graspless_manip_mode;
+      string graspless_manip_arm;
+      DblArray3 graspless_manip_p_gain;
+      DblArray3 graspless_manip_reference_trans_pos;
+      DblArray4 graspless_manip_reference_trans_rot;
     };
 
     /**
