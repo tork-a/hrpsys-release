@@ -88,11 +88,11 @@ class ImpedanceController
   // no corresponding operation exists in OpenRTm-aist-0.2.0
   // virtual RTC::ReturnCode_t onRateChanged(RTC::UniqueId ec_id);
 
+  bool startImpedanceController(const std::string& i_name_);
+  bool stopImpedanceController(const std::string& i_name_);
   bool setImpedanceControllerParam(const std::string& i_name_, OpenHRP::ImpedanceControllerService::impedanceParam i_param_);
   bool getImpedanceControllerParam(const std::string& i_name_, OpenHRP::ImpedanceControllerService::impedanceParam& i_param_);
-  bool deleteImpedanceController(std::string i_name_);
-  void waitDeletingImpedanceController(std::string i_name_);
-  bool deleteImpedanceControllerAndWait(std::string i_name_);
+  void waitImpedanceControllerTransition(std::string i_name_);
 
  protected:
   // Configuration variable declaration
@@ -106,12 +106,16 @@ class ImpedanceController
   InPort<TimedDoubleSeq> m_qCurrentIn;
   TimedDoubleSeq m_qRef;
   InPort<TimedDoubleSeq> m_qRefIn;
+  TimedPoint3D m_basePos;
+  InPort<TimedPoint3D> m_basePosIn;
+  TimedOrientation3D m_baseRpy;
+  InPort<TimedOrientation3D> m_baseRpyIn;
   std::vector<TimedDoubleSeq> m_force;
   std::vector<InPort<TimedDoubleSeq> *> m_forceIn;
+  std::vector<TimedDoubleSeq> m_ref_force;
+  std::vector<InPort<TimedDoubleSeq> *> m_ref_forceIn;
   TimedOrientation3D m_rpy;
-  TimedOrientation3D m_rpyRef;
   InPort<TimedOrientation3D> m_rpyIn;
-  InPort<TimedOrientation3D> m_rpyRefIn;
   
   // </rtc-template>
 
@@ -119,8 +123,6 @@ class ImpedanceController
   // <rtc-template block="outport_declare">
   TimedDoubleSeq m_q;
   OutPort<TimedDoubleSeq> m_qOut;
-  std::vector<TimedDoubleSeq> m_ref_force;
-  std::vector<OutPort<TimedDoubleSeq> *> m_ref_forceOut;
   
   // </rtc-template>
 
@@ -143,7 +145,7 @@ class ImpedanceController
 
  private:
   struct ImpedanceParam{
-    std::string base_name, target_name;
+    std::string sensor_name;
     hrp::Vector3 target_p0, target_p1, current_p0, current_p1, current_p2;
     hrp::Matrix33 target_r0, target_r1, current_r0, current_r1, current_r2;
     double M_p, D_p, K_p;
@@ -154,26 +156,31 @@ class ImpedanceController
     int transition_count; // negative value when initing and positive value when deleting
     hrp::dvector transition_joint_q;
     hrp::JointPathExPtr manip;
+    bool is_active;
 
     ImpedanceParam ()
       : M_p(10), D_p(200), K_p(400), M_r(5), D_r(100), K_r(200),
         ref_force(hrp::Vector3::Zero()), ref_moment(hrp::Vector3::Zero()),
         force_gain(hrp::Matrix33::Identity()), moment_gain(hrp::Matrix33::Identity()),
-        sr_gain(1.0), avoid_gain(0.001), reference_gain(0.01), manipulability_limit(0.1)
+        sr_gain(1.0), avoid_gain(0.001), reference_gain(0.01), manipulability_limit(0.1), transition_count(0), is_active(false)
     {};
   };
-  struct VirtualForceSensorParam {
-    hrp::Vector3 p;
-    hrp::Matrix33 R;
-    std::string parent_link_name;
+  struct ee_trans {
+    std::string target_name;
+    hrp::Vector3 localPos;
+    hrp::Matrix33 localR;
   };
-  bool checkImpedanceNameValidity (int& force_id, const std::string& name);
+
+  bool startImpedanceControllerNoWait(const std::string& i_name_);
+  bool stopImpedanceControllerNoWait(const std::string& i_name_);
   void copyImpedanceParam (OpenHRP::ImpedanceControllerService::impedanceParam& i_param_, const ImpedanceParam& param);
   void updateRootLinkPosRot (TimedOrientation3D tmprpy);
+  void calcForceMoment();
 
   std::map<std::string, ImpedanceParam> m_impedance_param;
-  std::map<std::string, VirtualForceSensorParam> m_sensors;
-  std::map<std::string, hrp::Vector3> abs_forces, abs_moments;
+  std::map<std::string, ee_trans> ee_map;
+  std::map<std::string, hrp::VirtualForceSensorParam> m_vfs;
+  std::map<std::string, hrp::Vector3> abs_forces, abs_moments, abs_ref_forces, abs_ref_moments;
   double m_dt;
   hrp::BodyPtr m_robot;
   coil::Mutex m_mutex;
