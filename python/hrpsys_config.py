@@ -4,12 +4,7 @@ import os
 import rtm
 
 from rtm import *
-import imp
-try:
-    imp.load_module('OpenHRP')
-    from OpenHRP import *
-except:
-    from OpenHRP3 import * # for old OpenHRP3 (3.1.7)
+from OpenHRP import *
 from hrpsys import *  # load ModelLoader
 
 import socket
