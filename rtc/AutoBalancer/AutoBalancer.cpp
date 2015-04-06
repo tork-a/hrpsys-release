@@ -53,6 +53,7 @@ AutoBalancer::AutoBalancer(RTC::Manager* manager)
       m_basePosOut("basePosOut", m_basePos),
       m_baseRpyOut("baseRpyOut", m_baseRpy),
       m_baseTformOut("baseTformOut", m_baseTform),
+      m_basePoseOut("basePoseOut", m_basePose),
       m_accRefOut("accRef", m_accRef),
       m_contactStatesOut("contactStates", m_contactStates),
       m_controlSwingSupportTimeOut("controlSwingSupportTime", m_controlSwingSupportTime),
@@ -73,7 +74,7 @@ AutoBalancer::~AutoBalancer()
 
 RTC::ReturnCode_t AutoBalancer::onInitialize()
 {
-    std::cout << "AutoBalancer::onInitialize()" << std::endl;
+    std::cerr << "[" << m_profile.instance_name << "] onInitialize()" << std::endl;
     bindParameter("debugLevel", m_debugLevel, "0");
 
     // Registration: InPort/OutPort/Service
@@ -91,6 +92,7 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
     addOutPort("basePosOut", m_basePosOut);
     addOutPort("baseRpyOut", m_baseRpyOut);
     addOutPort("baseTformOut", m_baseTformOut);
+    addOutPort("basePoseOut", m_basePoseOut);
     addOutPort("accRef", m_accRefOut);
     addOutPort("contactStates", m_contactStatesOut);
     addOutPort("controlSwingSupportTime", m_controlSwingSupportTimeOut);
@@ -151,7 +153,7 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
     if (leg_offset_str.size() > 0) {
       hrp::Vector3 leg_offset;
       for (size_t i = 0; i < 3; i++) coil::stringTo(leg_offset(i), leg_offset_str[i].c_str());
-      std::cerr << m_profile.instance_name << " abc_leg_offset = " << leg_offset.format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "    [", "]")) << "[m]" << std::endl;
+      std::cerr << "[" << m_profile.instance_name << "] abc_leg_offset = " << leg_offset.format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "    [", "]")) << "[m]" << std::endl;
       leg_pos.push_back(hrp::Vector3(-1*leg_offset));
       leg_pos.push_back(hrp::Vector3(leg_offset));
     }
@@ -192,6 +194,15 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
         }
         tp.localR = Eigen::AngleAxis<double>(tmpv[3], hrp::Vector3(tmpv[0], tmpv[1], tmpv[2])).toRotationMatrix(); // rotation in VRML is represented by axis + angle
         tp.manip = hrp::JointPathExPtr(new hrp::JointPathEx(m_robot, m_robot->link(ee_base), m_robot->link(ee_target), m_dt));
+        // Fix for toe joint
+        if (ee_name.find("leg") != std::string::npos && tp.manip->numJoints() == 7) { // leg and 7dof joint (6dof leg +1dof toe)
+            std::vector<double> optw;
+            for (int j = 0; j < tp.manip->numJoints(); j++ ) {
+                if ( j == tp.manip->numJoints()-1 ) optw.push_back(0.0);
+                else optw.push_back(1.0);
+            }
+            tp.manip->setOptionalWeightVector(optw);
+        }
         ikp.insert(std::pair<std::string, ABCIKparam>(ee_name , tp));
         ikp[ee_name].target_link = m_robot->link(ee_target);
         std::cerr << "[" << m_profile.instance_name << "] End Effector [" << ee_name << "]" << std::endl;
@@ -220,6 +231,8 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
     int nforce  = npforce + nvforce;
     m_ref_force.resize(nforce);
     m_ref_forceIn.resize(nforce);
+    m_limbCOPOffset.resize(nforce);
+    m_limbCOPOffsetOut.resize(nforce);
     for (unsigned int i=0; i<npforce; i++){
         sensor_names.push_back(m_robot->sensor(hrp::Sensor::FORCE, i)->name);
     }
@@ -236,6 +249,15 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
         registerInPort(std::string("ref_"+sensor_names[i]).c_str(), *m_ref_forceIn[i]);
         std::cerr << "[" << m_profile.instance_name << "]   name = " << std::string("ref_"+sensor_names[i]) << std::endl;
         ref_forces.push_back(hrp::Vector3(0,0,0));
+    }
+    // set limb cop offset port
+    std::cerr << "[" << m_profile.instance_name << "] limbCOPOffset ports (" << nforce << ")" << std::endl;
+    for (unsigned int i=0; i<nforce; i++){
+        std::string nm("limbCOPOffset_"+sensor_names[i]);
+        m_limbCOPOffsetOut[i] = new OutPort<TimedPoint3D>(nm.c_str(), m_limbCOPOffset[i]);
+        registerOutPort(nm.c_str(), *m_limbCOPOffsetOut[i]);
+        m_limbCOPOffset[i].data.x = m_limbCOPOffset[i].data.y = m_limbCOPOffset[i].data.z = 0.0;
+        std::cerr << "[" << m_profile.instance_name << "]   name = " << nm << std::endl;
     }
     sbp_offset = hrp::Vector3(0,0,0);
     sbp_cog_offset = hrp::Vector3(0,0,0);
@@ -286,14 +308,14 @@ RTC::ReturnCode_t AutoBalancer::onFinalize()
 
 RTC::ReturnCode_t AutoBalancer::onActivated(RTC::UniqueId ec_id)
 {
-    std::cout << "AutoBalancer::onActivated(" << ec_id << ")" << std::endl;
+    std::cerr << "[" << m_profile.instance_name<< "] onActivated(" << ec_id << ")" << std::endl;
     
     return RTC::RTC_OK;
 }
 
 RTC::ReturnCode_t AutoBalancer::onDeactivated(RTC::UniqueId ec_id)
 {
-  std::cout << "AutoBalancer::onDeactivated(" << ec_id << ")" << std::endl;
+  std::cerr << "[" << m_profile.instance_name<< "] onDeactivated(" << ec_id << ")" << std::endl;
   Guard guard(m_mutex);
   if (control_mode == MODE_ABC) {
     control_mode = MODE_SYNC_TO_IDLE;
@@ -425,6 +447,14 @@ RTC::ReturnCode_t AutoBalancer::onExecute(RTC::UniqueId ec_id)
       tform_arr[2] = m_basePos.data.z;
       hrp::setMatrix33ToRowMajorArray(ref_baseRot, tform_arr, 3);
       m_baseTform.tm = m_qRef.tm;
+      // basePose
+      m_basePose.data.position.x = m_basePos.data.x;
+      m_basePose.data.position.y = m_basePos.data.y;
+      m_basePose.data.position.z = m_basePos.data.z;
+      m_basePose.data.orientation.r = m_baseRpy.data.r;
+      m_basePose.data.orientation.p = m_baseRpy.data.p;
+      m_basePose.data.orientation.y = m_baseRpy.data.y;
+      m_basePose.tm = m_qRef.tm;
       // zmp
       m_zmp.data.x = rel_ref_zmp(0);
       m_zmp.data.y = rel_ref_zmp(1);
@@ -439,6 +469,7 @@ RTC::ReturnCode_t AutoBalancer::onExecute(RTC::UniqueId ec_id)
     m_basePosOut.write();
     m_baseRpyOut.write();
     m_baseTformOut.write();
+    m_basePoseOut.write();
     m_zmpOut.write();
     m_cogOut.write();
 
@@ -460,6 +491,11 @@ RTC::ReturnCode_t AutoBalancer::onExecute(RTC::UniqueId ec_id)
     m_contactStatesOut.write();
     m_controlSwingSupportTime.tm = m_qRef.tm;
     m_controlSwingSupportTimeOut.write();
+
+    for (unsigned int i=0; i<m_limbCOPOffsetOut.size(); i++){
+        m_limbCOPOffset[i].tm = m_qRef.tm;
+        m_limbCOPOffsetOut[i]->write();
+    }
 
     return RTC::RTC_OK;
 }
@@ -493,6 +529,12 @@ void AutoBalancer::getTargetParameters()
       for (size_t i = 0; i < 2; i++)
         for (size_t j = 0; j < 3; j++)
           default_zmp_offsets[i](j) = default_zmp_offsets_output[i*3+j];
+      m_limbCOPOffset[contact_states_index_map["rleg"]].data.x = default_zmp_offsets[0](0);
+      m_limbCOPOffset[contact_states_index_map["rleg"]].data.y = default_zmp_offsets[0](1);
+      m_limbCOPOffset[contact_states_index_map["rleg"]].data.z = default_zmp_offsets[0](2);
+      m_limbCOPOffset[contact_states_index_map["lleg"]].data.x = default_zmp_offsets[1](0);
+      m_limbCOPOffset[contact_states_index_map["lleg"]].data.y = default_zmp_offsets[1](1);
+      m_limbCOPOffset[contact_states_index_map["lleg"]].data.z = default_zmp_offsets[1](2);
       if (DEBUGP) {
         std::cerr << "[" << m_profile.instance_name << "] default_zmp_offsets (interpolated)" << std::endl;
         std::cerr << "[" << m_profile.instance_name << "]   rleg = " << default_zmp_offsets[0].format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "    [", "]")) << "[m]" << std::endl;
@@ -700,6 +742,13 @@ void AutoBalancer::solveLimbIK ()
   dif_cog(2) = m_robot->rootLink()->p(2) - target_root_p(2);
   m_robot->rootLink()->p = m_robot->rootLink()->p + -1 * move_base_gain * dif_cog;
   m_robot->rootLink()->R = target_root_R;
+  // Fix for toe joint
+  for ( std::map<std::string, ABCIKparam>::iterator it = ikp.begin(); it != ikp.end(); it++ ) {
+      if (it->second.is_active && (it->first.find("leg") != std::string::npos) && it->second.manip->numJoints() == 7) {
+          int i = it->second.target_link->jointId;
+          m_robot->joint(i)->q = qrefv[i];
+      }
+  }
   m_robot->calcForwardKinematics();
 
   for ( std::map<std::string, ABCIKparam>::iterator it = ikp.begin(); it != ikp.end(); it++ ) {
@@ -943,6 +992,16 @@ bool AutoBalancer::setGaitGeneratorParam(const OpenHRP::AutoBalancerService::Gai
   gg->set_swing_trajectory_delay_time_offset(i_param.swing_trajectory_delay_time_offset);
   gg->set_stair_trajectory_way_point_offset(hrp::Vector3(i_param.stair_trajectory_way_point_offset[0], i_param.stair_trajectory_way_point_offset[1], i_param.stair_trajectory_way_point_offset[2]));
   gg->set_gravitational_acceleration(i_param.gravitational_acceleration);
+  gg->set_toe_angle(i_param.toe_angle);
+  gg->set_heel_angle(i_param.heel_angle);
+  gg->set_toe_pos_offset_x(i_param.toe_pos_offset_x);
+  gg->set_heel_pos_offset_x(i_param.heel_pos_offset_x);
+  if (i_param.toe_heel_phase_ratio.length() == gg->get_NUM_TH_PHASES()) {
+      double ratio[gg->get_NUM_TH_PHASES()];
+      for (int i = 0; i < gg->get_NUM_TH_PHASES(); i++) ratio[i] = i_param.toe_heel_phase_ratio[i];
+      gg->set_toe_heel_phase_ratio(ratio);
+  }
+
   // print
   double stride_fwd_x, stride_y, stride_th, stride_bwd_x;
   gg->get_stride_parameters(stride_fwd_x, stride_y, stride_th, stride_bwd_x);
@@ -966,6 +1025,19 @@ bool AutoBalancer::setGaitGeneratorParam(const OpenHRP::AutoBalancerService::Gai
   tmpv = gg->get_stair_trajectory_way_point_offset();
   std::cerr << "[" << m_profile.instance_name << "]   stair_trajectory_way_point_offset = " << tmpv.format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "    [", "]")) << "[m]" << std::endl;
   std::cerr << "[" << m_profile.instance_name << "]   gravitational_acceleration = " << gg->get_gravitational_acceleration() << "[m/s^2]" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "]   toe_pos_offset_x = " << gg->get_toe_pos_offset_x() << "[mm]" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "]   heel_pos_offset_x = " << gg->get_heel_pos_offset_x() << "[mm]" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "]   toe_angle = " << gg->get_toe_angle() << "[deg]" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "]   heel_angle = " << gg->get_heel_angle() << "[deg]" << std::endl;
+  if (i_param.toe_heel_phase_ratio.length() == gg->get_NUM_TH_PHASES()) {
+      double ratio[gg->get_NUM_TH_PHASES()];
+      gg->get_toe_heel_phase_ratio(ratio);
+      std::cerr << "[" << m_profile.instance_name << "]   toe_heel_phase_ratio = [";
+      for (int i = 0; i < gg->get_NUM_TH_PHASES(); i++) std::cerr << ratio[i] << " ";
+      std::cerr << "]" << std::endl;
+  } else {
+      std::cerr << "[" << m_profile.instance_name << "]   toe_heel_phase_ratio is not set. Required length = " << gg->get_NUM_TH_PHASES() << " != input length " << i_param.toe_heel_phase_ratio.length() << std::endl;
+  }
   return true;
 };
 
@@ -988,6 +1060,13 @@ bool AutoBalancer::getGaitGeneratorParam(OpenHRP::AutoBalancerService::GaitGener
   for (size_t i = 0; i < 3; i++) i_param.stair_trajectory_way_point_offset[i] = tmpv(i);
   i_param.swing_trajectory_delay_time_offset = gg->get_swing_trajectory_delay_time_offset();
   i_param.gravitational_acceleration = gg->get_gravitational_acceleration();
+  i_param.toe_angle = gg->get_toe_angle();
+  i_param.heel_angle = gg->get_heel_angle();
+  i_param.toe_pos_offset_x = gg->get_toe_pos_offset_x();
+  i_param.heel_pos_offset_x = gg->get_heel_pos_offset_x();
+  double ratio[gg->get_NUM_TH_PHASES()];
+  gg->get_toe_heel_phase_ratio(ratio);
+  for (int i = 0; i < gg->get_NUM_TH_PHASES(); i++) i_param.toe_heel_phase_ratio[i] = ratio[i];
   return true;
 };
 
