@@ -172,6 +172,11 @@ class HrpsysConfigurator:
     sh_svc = None
     sh_version = None
 
+    # ServoController
+    sc= None
+    sc_svc = None
+    sc_version = None
+
     # ForwardKinematics
     fk = None
     fk_svc = None
@@ -227,6 +232,7 @@ class HrpsysConfigurator:
     log = None
     log_svc = None
     log_version = None
+    log_use_owned_ec = False
 
     # rtm manager
     ms = None
@@ -279,6 +285,13 @@ class HrpsysConfigurator:
             else:
                 connectPorts(self.sh.port("qOut"), self.rh.port("qRef"))
 
+        # only for kinematics simulator
+        if rtm.findPort(self.rh.ref, "basePoseRef"):
+            if self.abc:
+                connectPorts(self.abc.port("basePoseOut"), self.rh.port("basePoseRef"))
+            else:
+                connectPorts(self.sh.port("basePoseOut"), self.rh.port("basePoseRef"))
+
         # connection for kf
         if self.kf:
             #   currently use first acc and rate sensors for kf
@@ -312,13 +325,15 @@ class HrpsysConfigurator:
         connectPorts(self.seq.port("basePos"), self.sh.port("basePosIn"))
         connectPorts(self.seq.port("baseRpy"), self.sh.port("baseRpyIn"))
         connectPorts(self.seq.port("zmpRef"), self.sh.port("zmpIn"))
-        connectPorts(self.seq.port("optionalData"), self.sh.port("optionalDataIn"))
+        if self.seq_version >= '315.2.6':
+            connectPorts(self.seq.port("optionalData"), self.sh.port("optionalDataIn"))
         connectPorts(self.sh.port("basePosOut"), [self.seq.port("basePosInit"),
                                                   self.fk.port("basePosRef")])
         connectPorts(self.sh.port("baseRpyOut"), [self.seq.port("baseRpyInit"),
                                                   self.fk.port("baseRpyRef")])
         connectPorts(self.sh.port("qOut"), self.seq.port("qInit"))
-        connectPorts(self.sh.port("zmpOut"), self.seq.port("zmpRefInit"))
+        if self.seq_version >= '315.2.0':
+            connectPorts(self.sh.port("zmpOut"), self.seq.port("zmpRefInit"))
         for sen in self.getForceSensorNames():
             connectPorts(self.seq.port(sen + "Ref"),
                          self.sh.port(sen + "In"))
@@ -352,6 +367,9 @@ class HrpsysConfigurator:
             if self.abc:
                 connectPorts(self.sh.port(sen+"Out"),
                              self.abc.port("ref_" + sen))
+            if self.abc and self.st:
+                connectPorts(self.abc.port("limbCOPOffset_"+sen),
+                             self.st.port("limbCOPOffset_"+sen))
 
         #  actual force sensors
         if self.rmfo:
@@ -372,8 +390,9 @@ class HrpsysConfigurator:
         # connection for ic
         if self.ic:
             connectPorts(self.rh.port("q"), self.ic.port("qCurrent"))
-            connectPorts(self.sh.port("basePosOut"), self.ic.port("basePosIn"))
-            connectPorts(self.sh.port("baseRpyOut"), self.ic.port("baseRpyIn"))
+            if self.seq_version >= '315.3.0':
+                connectPorts(self.sh.port("basePosOut"), self.ic.port("basePosIn"))
+                connectPorts(self.sh.port("baseRpyOut"), self.ic.port("baseRpyIn"))
         # connection for tf
         if self.tf:
             # connection for actual torques
@@ -445,6 +464,14 @@ class HrpsysConfigurator:
         for r in rtcList:
             r.start()
 
+    def deactivateComps(self):
+        '''!@brief
+        Deactivate components(plugins)
+        '''
+        rtcList = self.getRTCInstanceList()
+        for r in reversed(rtcList):
+            r.stop()
+
     def createComp(self, compName, instanceName):
         '''!@brief
         Create RTC component (plugins)
@@ -480,6 +507,33 @@ class HrpsysConfigurator:
                 print self.configurator_name, '\033[31mFail to createComps',e,'\033[0m'
 
 
+    def deleteComp(self, compName):
+        '''!@brief
+        Delete RTC component (plugins)
+
+        @param compName str: name of component that to be deleted
+        '''
+        # component must be stoppped before delete
+        comp = rtm.findRTC(compName)
+        comp.stop()
+        return self.ms.delete(compName)
+
+    def deleteComps(self):
+        '''!@brief
+        Delete components(plugins) in getRTCInstanceList()
+        '''
+        self.deactivateComps()
+        rtcList = self.getRTCInstanceList()
+        if rtcList:
+            try:
+                rtcList.remove(self.rh)
+                for r in reversed(rtcList):
+                    if r.isActive():
+                        print self.configurator_name, '\033[31m ' + r.name() + ' is staill active\033[0m'
+                    self.deleteComp(r.name())
+            except Exception, e:
+                print self.configurator_name, '\033[31mFail to deleteComps',e,'\033[0m'
+
     def findComp(self, compName, instanceName, max_timeout_count=10):
         '''!@brief
         Find component(plugin) 
@@ -490,6 +544,7 @@ class HrpsysConfigurator:
         '''
         timeout_count = 0
         comp = rtm.findRTC(instanceName)
+        version = None
         while comp == None and timeout_count < max_timeout_count:
             comp = rtm.findRTC(instanceName)
             if comp != None:
@@ -497,17 +552,19 @@ class HrpsysConfigurator:
             print self.configurator_name, " find Comp wait for", instanceName
             time.sleep(1)
             timeout_count += 1
-        print self.configurator_name, " find Comp    : ", instanceName, " = ", comp
+        if comp and comp.ref:
+            version = comp.ref.get_component_profile().version
+        print self.configurator_name, " find Comp    : ", instanceName, " = ", comp, " (", version, ")"
         if comp == None:
             print self.configurator_name, " Cannot find component: " + instanceName + " (" + compName + ")"
-            return [None, None]
+            return [None, None, None]
         comp_svc_port = comp.service("service0")
         if comp_svc_port:
             comp_svc = narrow(comp_svc_port, compName + "Service")
             print self.configurator_name, " find CompSvc : ", instanceName + "_svc = ", comp_svc
-            return [comp, comp_svc]
+            return [comp, comp_svc, version]
         else:
-            return [comp, None]
+            return [comp, None, version]
 
     def findComps(self):
         '''!@brief
@@ -517,7 +574,7 @@ class HrpsysConfigurator:
         for rn in self.getRTCList():
             rn2 = 'self.' + rn[0]
             if eval(rn2) == None:
-                create_str = "[self." + rn[0] + ", self." + rn[0] + "_svc] = self.findComp(\"" + rn[1] + "\",\"" + rn[0] + "\"," + str(max_timeout_count) + ")"
+                create_str = "[self." + rn[0] + ", self." + rn[0] + "_svc, self." + rn[0] + "_version] = self.findComp(\"" + rn[1] + "\",\"" + rn[0] + "\"," + str(max_timeout_count) + ")"
                 print self.configurator_name, create_str
                 exec(create_str)
                 if eval(rn2) == None:
@@ -589,9 +646,13 @@ class HrpsysConfigurator:
         Get list of RTC Instance
         '''
         ret = [self.rh]
-        for r in map(lambda x: 'self.' + x[0], self.getRTCList()):
+        for rtc in self.getRTCList():
+            r = 'self.'+rtc[0]
             try:
-                ret.append(eval(r))
+                if eval(r): 
+                    ret.append(eval(r))
+                else:
+                    print self.configurator_name, '\033[31mFail to find instance ('+str(rtc)+') for getRTCInstanceList\033[0m'
             except Exception, e:
                 print self.configurator_name, '\033[31mFail to getRTCInstanceList',e,'\033[0m'
         return ret
@@ -713,6 +774,11 @@ class HrpsysConfigurator:
             for sen in filter(lambda x: x.type == "Force", self.sensors):
                 self.connectLoggerPort(self.rmfo, "off_"+sen.name)
         self.log_svc.clear()
+        ## parallel running log process (outside from rtcd) for saving logs by emergency signal
+        if self.log and (self.log_use_owned_ec or not isinstance(self.log.owned_ecs[0], OpenRTM._objref_ExtTrigExecutionContextService)):
+            print self.configurator_name, "\033[32mruning DataLogger with own Execution Context\033[0m"
+            self.log.owned_ecs[0].start()
+            self.log.start(self.log.owned_ecs[0])
 
     def waitForRTCManager(self, managerhost=nshost):
         '''!@brief
@@ -761,13 +827,16 @@ class HrpsysConfigurator:
         '''!@brief
         Check if this is running as simulation
         '''
-        # distinguish real robot from simulation by using "servoState" port
-        if rtm.findPort(self.rh.ref, "servoState") == None:
-            self.hgc = findRTC("HGcontroller0")
-            self.pdc = findRTC("PDcontroller0")
+        # distinguish real robot from simulation by check "HG/PD controller" ( > 315.3.0)
+        # distinguish real robot from simulation by using "servoState" port  (<= 315.3.0)
+        self.hgc = findRTC("HGcontroller0")
+        self.pdc = findRTC("PDcontroller0")
+        if self.hgc or self.pdc:
             self.simulation_mode = True
         else:
             self.simulation_mode = False
+
+        if rtm.findPort(self.rh.ref, "servoState"): # for RobotHadware <= 315.3.0, which does not have service port
             self.rh_svc = narrow(self.rh.service("service0"), "RobotHardwareService")
             self.ep_svc = narrow(self.rh.ec, "ExecutionProfileService")
 
@@ -1161,15 +1230,15 @@ class HrpsysConfigurator:
 
     def setTargetPose(self, gname, pos, rpy, tm, frame_name=None):
         '''!@brief
-        Set absolute pose to a joint.
+        Move the end-effector to the given absolute pose.
         All d* arguments are in meter.
 
         @param gname str: Name of the joint group.
         @param pos list of float: In meter.
         @param rpy list of float: In radian.
-        @param tm float: Second to complete.
+        @param tm float: Second to complete the command.
         @param frame_name str: Name of the frame that this particular command
-                           reference to.
+                           references to.
         @return bool: False if unreachable.
         '''
         print gname, frame_name, pos, rpy, tm
@@ -1186,7 +1255,7 @@ class HrpsysConfigurator:
     def setTargetPoseRelative(self, gname, eename, dx=0, dy=0, dz=0,
 dr=0, dp=0, dw=0, tm=10, wait=True):
         '''!@brief
-        Set angles to a joint group relative to its current pose.
+        Move the end-effector's location relative to its current pose.
 
         For d*, distance arguments are in meter while rotations are in degree.
 
@@ -1203,7 +1272,7 @@ dr=0, dp=0, dw=0, tm=10, wait=True):
         @param dr float: In radian.
         @param dp float: In radian.
         @param dw float: In radian.
-        @param tm float: Second to complete.
+        @param tm float: Second to complete the command.
         @param wait bool: If true, all other subsequent commands wait until
                           the movement commanded by this method call finishes.
         @return bool: False if unreachable.
@@ -1212,13 +1281,13 @@ dr=0, dp=0, dw=0, tm=10, wait=True):
         # curPose = self.getCurrentPose(eename)
         posRef = None
         rpyRef = None
-        ret, tds = self.fk_svc.getCurrentPose(eename)
-        if ret:
-            posRef = numpy.array([tds.data[3], tds.data[7], tds.data[11]])
-            rpyRef = numpy.array(euler_from_matrix([tds.data[0:3],
-tds.data[4:7], tds.data[8:11]], 'sxyz'))
+        tds = self.getCurrentPose(eename)
+        if tds:
+            posRef = numpy.array([tds[3], tds[7], tds[11]])
+            matRef = numpy.array([tds[0:3], tds[4:7], tds[8:11]])
             posRef += [dx, dy, dz]
-            rpyRef += [dr, dp, dw]
+            matRef = matRef.dot(numpy.array(euler_matrix(dr, dp, dw)[:3, :3])) 
+            rpyRef = euler_from_matrix(matRef)
             print posRef, rpyRef
             ret = self.setTargetPose(gname, list(posRef), list(rpyRef), tm)
             if ret and wait:
