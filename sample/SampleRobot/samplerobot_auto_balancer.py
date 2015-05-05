@@ -17,7 +17,7 @@ def init ():
     global hcf
     hcf = HrpsysConfigurator()
     hcf.getRTCList = hcf.getRTCListUnstable
-    hcf.init ("SampleRobot(Robot)0", "$(OPENHRP_DIR)/share/OpenHRP-3.1/sample/model/sample1.wrl")
+    hcf.init ("SampleRobot(Robot)0", "$(PROJECT_DIR)/../model/sample1.wrl")
 
 def testPoseList(pose_list, initial_pose):
     for pose in pose_list:
@@ -150,6 +150,20 @@ def demo():
     hcf.abc_svc.waitFootSteps()
     hcf.abc_svc.stopAutoBalancer();
     print "Non default Stride()=>OK"
+    #   8. Use toe heel contact
+    hcf.abc_svc.startAutoBalancer(["rleg", "lleg"]);
+    ggp=hcf.abc_svc.getGaitGeneratorParam()[1];
+    ggp.toe_pos_offset_x = 1e-3*182.0;
+    ggp.heel_pos_offset_x = 1e-3*-72.0;
+    ggp.toe_zmp_offset_x = 1e-3*182.0;
+    ggp.heel_zmp_offset_x = 1e-3*-72.0;
+    ggp.toe_angle = 20;
+    ggp.heel_angle = 10;
+    hcf.abc_svc.setGaitGeneratorParam(ggp);
+    hcf.abc_svc.goPos(0.3, 0, 0);
+    hcf.abc_svc.waitFootSteps()
+    hcf.abc_svc.stopAutoBalancer();
+    print "Toe heel contact=>OK"
     #  7. walking by fixing 
     # abc_svc.startAutoBalancer([AutoBalancerService.AutoBalancerLimbParam("rleg", [0,0,0], [0,0,0,0]),
     #                   AutoBalancerService.AutoBalancerLimbParam("lleg", [0,0,0], [0,0,0,0]),
