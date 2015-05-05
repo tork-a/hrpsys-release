@@ -28,10 +28,21 @@ module OpenHRP
     };
 
     /**
+     * @struct StepParam
+     * @brief Step parameter for one step
+     */
+    struct StepParam
+    {
+      /// Step height [m]
+      double step_height;
+    };
+
+    /**
      * @struct FootstepSequence
      * @brief Sequence of foot step.
      */
     typedef sequence<Footstep> FootstepSequence;
+    typedef sequence<StepParam> StepParamSequence;
 
     /**
      * @enum SupportLegState
@@ -115,16 +126,24 @@ module OpenHRP
       DblArray3 stair_trajectory_way_point_offset;
       /// Gravitational acceleration [m/s^2]
       double gravitational_acceleration;
-      /// Toe position offset [mm] in end-effector frame x axis
+      /// Toe position offset [m] in end-effector frame x axis
       double toe_pos_offset_x;
-      /// Heel position offset [mm] in end-effector frame x axis
+      /// Heel position offset [m] in end-effector frame x axis
       double heel_pos_offset_x;
+      /// Toe ZMP offset [m] in end-effector frame x axis
+      double toe_zmp_offset_x;
+      /// Heel ZMP offset [m] in end-effector frame x axis
+      double heel_zmp_offset_x;
       /// Maximum toe angle [deg] for toe-off motion
       double toe_angle;
       /// Maximum heel angle [deg] for heel-contact motion
       double heel_angle;
       /// Sequence of phase ratio of toe-off and heel-contact. Sum of toe_heel_phase_ratio should be 1.0.
       sequence<double> toe_heel_phase_ratio;
+      /// Use toe joint or not in toe-off heel-contact motion.
+      boolean use_toe_joint;
+      /// Use toe heel zmp transition. If true, zmp moves among default position, toe position (described by toe_zmp_offset_x), and heel position (described by heel_zmp_offset_x).
+      boolean use_toe_heel_transition;
     };
 
     /**
@@ -171,6 +190,13 @@ module OpenHRP
      * @return true if set successfully, false otherwise
      */
     boolean setFootSteps(in FootstepSequence fs);
+
+    /**
+     * @brief Set footsteps. Returns without waiting for whole steps to be executed.
+     * @param fs is sequence of FootStepWithParam structure.
+     * @return true if set successfully, false otherwise
+     */
+    boolean setFootStepsWithParam(in FootstepSequence fs, in StepParamSequence sps);
 
     /**
      * @brief Wait for whole footsteps are executed.
