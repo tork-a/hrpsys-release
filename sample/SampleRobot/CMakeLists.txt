@@ -57,7 +57,12 @@ install(FILES
   ${CMAKE_CURRENT_BINARY_DIR}/SampleRobot.TerrainFloor.SlopeUpDown.xml
   ${CMAKE_CURRENT_BINARY_DIR}/SampleRobot.TerrainFloor.StairUp.xml
   ${CMAKE_CURRENT_BINARY_DIR}/SampleRobot.TerrainFloor.StairDown.xml
+  SampleRobot.DRCTestbed.xml
   DESTINATION share/hrpsys/samples/SampleRobot)
 
+file(GLOB python_scripts RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.py)
+install(PROGRAMS
+    ${python_scripts}
+  DESTINATION share/hrpsys/samples/SampleRobot)
 add_subdirectory(rtc)
 
