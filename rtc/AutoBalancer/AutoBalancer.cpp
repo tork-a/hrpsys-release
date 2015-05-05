@@ -193,7 +193,7 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
           coil::stringTo(tmpv[j], end_effectors_str[i*prop_num+6+j].c_str());
         }
         tp.localR = Eigen::AngleAxis<double>(tmpv[3], hrp::Vector3(tmpv[0], tmpv[1], tmpv[2])).toRotationMatrix(); // rotation in VRML is represented by axis + angle
-        tp.manip = hrp::JointPathExPtr(new hrp::JointPathEx(m_robot, m_robot->link(ee_base), m_robot->link(ee_target), m_dt));
+        tp.manip = hrp::JointPathExPtr(new hrp::JointPathEx(m_robot, m_robot->link(ee_base), m_robot->link(ee_target), m_dt, false));
         // Fix for toe joint
         if (ee_name.find("leg") != std::string::npos && tp.manip->numJoints() == 7) { // leg and 7dof joint (6dof leg +1dof toe)
             std::vector<double> optw;
@@ -529,12 +529,6 @@ void AutoBalancer::getTargetParameters()
       for (size_t i = 0; i < 2; i++)
         for (size_t j = 0; j < 3; j++)
           default_zmp_offsets[i](j) = default_zmp_offsets_output[i*3+j];
-      m_limbCOPOffset[contact_states_index_map["rleg"]].data.x = default_zmp_offsets[0](0);
-      m_limbCOPOffset[contact_states_index_map["rleg"]].data.y = default_zmp_offsets[0](1);
-      m_limbCOPOffset[contact_states_index_map["rleg"]].data.z = default_zmp_offsets[0](2);
-      m_limbCOPOffset[contact_states_index_map["lleg"]].data.x = default_zmp_offsets[1](0);
-      m_limbCOPOffset[contact_states_index_map["lleg"]].data.y = default_zmp_offsets[1](1);
-      m_limbCOPOffset[contact_states_index_map["lleg"]].data.z = default_zmp_offsets[1](2);
       if (DEBUGP) {
         std::cerr << "[" << m_profile.instance_name << "] default_zmp_offsets (interpolated)" << std::endl;
         std::cerr << "[" << m_profile.instance_name << "]   rleg = " << default_zmp_offsets[0].format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "    [", "]")) << "[m]" << std::endl;
@@ -558,15 +552,15 @@ void AutoBalancer::getTargetParameters()
       gg->get_swing_support_mid_coords(tmp_fix_coords);
       // TODO : assume biped
       switch (gg->get_current_support_state()) {
-      case 0:
+      case gait_generator::BOTH:
         m_contactStates.data[contact_states_index_map["rleg"]] = true;
         m_contactStates.data[contact_states_index_map["lleg"]] = true;
         break;
-      case 1:
+      case gait_generator::RLEG:
         m_contactStates.data[contact_states_index_map["rleg"]] = true;
         m_contactStates.data[contact_states_index_map["lleg"]] = false;
         break;
-      case 2:
+      case gait_generator::LLEG:
         m_contactStates.data[contact_states_index_map["rleg"]] = false;
         m_contactStates.data[contact_states_index_map["lleg"]] = true;
         break;
@@ -575,6 +569,12 @@ void AutoBalancer::getTargetParameters()
       }
       m_controlSwingSupportTime.data[contact_states_index_map["rleg"]] = gg->get_current_swing_time(0);
       m_controlSwingSupportTime.data[contact_states_index_map["lleg"]] = gg->get_current_swing_time(1);
+      m_limbCOPOffset[contact_states_index_map[gg->get_swing_leg()]].data.x = gg->get_swing_foot_zmp_offset()(0);
+      m_limbCOPOffset[contact_states_index_map[gg->get_swing_leg()]].data.y = gg->get_swing_foot_zmp_offset()(1);
+      m_limbCOPOffset[contact_states_index_map[gg->get_swing_leg()]].data.z = gg->get_swing_foot_zmp_offset()(2);
+      m_limbCOPOffset[contact_states_index_map[gg->get_support_leg()]].data.x = gg->get_support_foot_zmp_offset()(0);
+      m_limbCOPOffset[contact_states_index_map[gg->get_support_leg()]].data.y = gg->get_support_foot_zmp_offset()(1);
+      m_limbCOPOffset[contact_states_index_map[gg->get_support_leg()]].data.z = gg->get_support_foot_zmp_offset()(2);
     } else {
       tmp_fix_coords = fix_leg_coords;
       // double support by default
@@ -583,6 +583,12 @@ void AutoBalancer::getTargetParameters()
       // controlSwingSupportTime is not used while double support period, 1.0 is neglected
       m_controlSwingSupportTime.data[contact_states_index_map["rleg"]] = 1.0;
       m_controlSwingSupportTime.data[contact_states_index_map["lleg"]] = 1.0;
+      m_limbCOPOffset[contact_states_index_map["rleg"]].data.x = default_zmp_offsets[0](0);
+      m_limbCOPOffset[contact_states_index_map["rleg"]].data.y = default_zmp_offsets[0](1);
+      m_limbCOPOffset[contact_states_index_map["rleg"]].data.z = default_zmp_offsets[0](2);
+      m_limbCOPOffset[contact_states_index_map["lleg"]].data.x = default_zmp_offsets[1](0);
+      m_limbCOPOffset[contact_states_index_map["lleg"]].data.y = default_zmp_offsets[1](1);
+      m_limbCOPOffset[contact_states_index_map["lleg"]].data.z = default_zmp_offsets[1](2);
     }
     // Tempolarily modify tmp_fix_coords
     // This will be removed after seq outputs adequate waistRPY discussed in https://github.com/fkanehiro/hrpsys-base/issues/272
@@ -746,7 +752,11 @@ void AutoBalancer::solveLimbIK ()
   for ( std::map<std::string, ABCIKparam>::iterator it = ikp.begin(); it != ikp.end(); it++ ) {
       if (it->second.is_active && (it->first.find("leg") != std::string::npos) && it->second.manip->numJoints() == 7) {
           int i = it->second.target_link->jointId;
-          m_robot->joint(i)->q = qrefv[i];
+          if (gg->get_swing_leg() == it->first) {
+              m_robot->joint(i)->q = qrefv[i] + -1 * gg->get_foot_dif_rot_angle();
+          } else {
+              m_robot->joint(i)->q = qrefv[i];
+          }
       }
   }
   m_robot->calcForwardKinematics();
@@ -919,6 +929,14 @@ bool AutoBalancer::goStop ()
 
 bool AutoBalancer::setFootSteps(const OpenHRP::AutoBalancerService::FootstepSequence& fs)
 {
+  OpenHRP::AutoBalancerService::StepParamSequence sps;
+  sps.length(fs.length());
+  for (size_t i = 0; i < sps.length(); i++) sps[i].step_height = gg->get_default_step_height();
+  setFootStepsWithParam(fs, sps);
+}
+
+bool AutoBalancer::setFootStepsWithParam(const OpenHRP::AutoBalancerService::FootstepSequence& fs, const OpenHRP::AutoBalancerService::StepParamSequence& sps)
+{
   if (!gg_is_walking) {
     std::cerr << "[" << m_profile.instance_name << "] setFootSteps" << std::endl;
     coordinates tmpfs, initial_support_coords, initial_input_coords, fstrans;
@@ -953,7 +971,7 @@ bool AutoBalancer::setFootSteps(const OpenHRP::AutoBalancerService::FootstepSequ
     std::cerr << "[" << m_profile.instance_name << "] print footsteps " << std::endl;
     gg->clear_footstep_node_list();
     for (size_t i = 0; i < fs_vec.size(); i++) {
-        gg->append_footstep_node(leg_name_vec[i], fs_vec[i]);
+        gg->append_footstep_node(leg_name_vec[i], fs_vec[i], sps[i].step_height);
     }
     gg->append_finalize_footstep();
     gg->print_footstep_list();
@@ -996,11 +1014,25 @@ bool AutoBalancer::setGaitGeneratorParam(const OpenHRP::AutoBalancerService::Gai
   gg->set_heel_angle(i_param.heel_angle);
   gg->set_toe_pos_offset_x(i_param.toe_pos_offset_x);
   gg->set_heel_pos_offset_x(i_param.heel_pos_offset_x);
+  gg->set_toe_zmp_offset_x(i_param.toe_zmp_offset_x);
+  gg->set_heel_zmp_offset_x(i_param.heel_zmp_offset_x);
+  bool set_toe_heel_phase_ratio = true;
+  double sum_ratio = 0.0;
   if (i_param.toe_heel_phase_ratio.length() == gg->get_NUM_TH_PHASES()) {
       double ratio[gg->get_NUM_TH_PHASES()];
-      for (int i = 0; i < gg->get_NUM_TH_PHASES(); i++) ratio[i] = i_param.toe_heel_phase_ratio[i];
-      gg->set_toe_heel_phase_ratio(ratio);
+      for (int i = 0; i < gg->get_NUM_TH_PHASES(); i++) {
+          ratio[i] = i_param.toe_heel_phase_ratio[i];
+          sum_ratio += ratio[i];
+      }
+      if (std::fabs(sum_ratio-1.0) < 1e-3) {
+          gg->set_toe_heel_phase_ratio(ratio);
+          set_toe_heel_phase_ratio = true;
+      } else {
+          set_toe_heel_phase_ratio = false;
+      }
   }
+  gg->set_use_toe_joint(i_param.use_toe_joint);
+  gg->set_use_toe_heel_transition(i_param.use_toe_heel_transition);
 
   // print
   double stride_fwd_x, stride_y, stride_th, stride_bwd_x;
@@ -1025,19 +1057,22 @@ bool AutoBalancer::setGaitGeneratorParam(const OpenHRP::AutoBalancerService::Gai
   tmpv = gg->get_stair_trajectory_way_point_offset();
   std::cerr << "[" << m_profile.instance_name << "]   stair_trajectory_way_point_offset = " << tmpv.format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "    [", "]")) << "[m]" << std::endl;
   std::cerr << "[" << m_profile.instance_name << "]   gravitational_acceleration = " << gg->get_gravitational_acceleration() << "[m/s^2]" << std::endl;
-  std::cerr << "[" << m_profile.instance_name << "]   toe_pos_offset_x = " << gg->get_toe_pos_offset_x() << "[mm]" << std::endl;
-  std::cerr << "[" << m_profile.instance_name << "]   heel_pos_offset_x = " << gg->get_heel_pos_offset_x() << "[mm]" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "]   toe_pos_offset_x = " << gg->get_toe_pos_offset_x() << "[mm], heel_pos_offset_x = " << gg->get_heel_pos_offset_x() << "[mm]" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "]   toe_zmp_offset_x = " << gg->get_toe_zmp_offset_x() << "[mm], heel_zmp_offset_x = " << gg->get_heel_zmp_offset_x() << "[mm]" << std::endl;
   std::cerr << "[" << m_profile.instance_name << "]   toe_angle = " << gg->get_toe_angle() << "[deg]" << std::endl;
   std::cerr << "[" << m_profile.instance_name << "]   heel_angle = " << gg->get_heel_angle() << "[deg]" << std::endl;
-  if (i_param.toe_heel_phase_ratio.length() == gg->get_NUM_TH_PHASES()) {
+  if (i_param.toe_heel_phase_ratio.length() == gg->get_NUM_TH_PHASES() && set_toe_heel_phase_ratio) {
       double ratio[gg->get_NUM_TH_PHASES()];
       gg->get_toe_heel_phase_ratio(ratio);
       std::cerr << "[" << m_profile.instance_name << "]   toe_heel_phase_ratio = [";
       for (int i = 0; i < gg->get_NUM_TH_PHASES(); i++) std::cerr << ratio[i] << " ";
       std::cerr << "]" << std::endl;
   } else {
-      std::cerr << "[" << m_profile.instance_name << "]   toe_heel_phase_ratio is not set. Required length = " << gg->get_NUM_TH_PHASES() << " != input length " << i_param.toe_heel_phase_ratio.length() << std::endl;
+      std::cerr << "[" << m_profile.instance_name << "]   toe_heel_phase_ratio is not set. "
+                << "Required length = " << gg->get_NUM_TH_PHASES() << " != input length " << i_param.toe_heel_phase_ratio.length()
+                << ", or sum_ratio = " << sum_ratio << " is not 1.0." << std::endl;
   }
+  std::cerr << "[" << m_profile.instance_name << "]   use_toe_joint = " << (gg->get_use_toe_joint()?"true":"false") << ", use_toe_heel_transition = " << (gg->get_use_toe_heel_transition()?"true":"false") << std::endl;
   return true;
 };
 
@@ -1064,9 +1099,13 @@ bool AutoBalancer::getGaitGeneratorParam(OpenHRP::AutoBalancerService::GaitGener
   i_param.heel_angle = gg->get_heel_angle();
   i_param.toe_pos_offset_x = gg->get_toe_pos_offset_x();
   i_param.heel_pos_offset_x = gg->get_heel_pos_offset_x();
+  i_param.toe_zmp_offset_x = gg->get_toe_zmp_offset_x();
+  i_param.heel_zmp_offset_x = gg->get_heel_zmp_offset_x();
   double ratio[gg->get_NUM_TH_PHASES()];
   gg->get_toe_heel_phase_ratio(ratio);
   for (int i = 0; i < gg->get_NUM_TH_PHASES(); i++) i_param.toe_heel_phase_ratio[i] = ratio[i];
+  i_param.use_toe_joint = gg->get_use_toe_joint();
+  i_param.use_toe_heel_transition = gg->get_use_toe_heel_transition();
   return true;
 };
 
@@ -1159,9 +1198,9 @@ bool AutoBalancer::getFootstepParam(OpenHRP::AutoBalancerService::FootstepParam&
     i_param.support_leg = OpenHRP::AutoBalancerService::LLEG;
   }
   switch ( gg->get_current_support_state() ) {
-  case 0: i_param.support_leg_with_both = OpenHRP::AutoBalancerService::BOTH; break;
-  case 1: i_param.support_leg_with_both = OpenHRP::AutoBalancerService::RLEG; break;
-  case 2: i_param.support_leg_with_both = OpenHRP::AutoBalancerService::LLEG; break;
+  case gait_generator::BOTH: i_param.support_leg_with_both = OpenHRP::AutoBalancerService::BOTH; break;
+  case gait_generator::RLEG: i_param.support_leg_with_both = OpenHRP::AutoBalancerService::RLEG; break;
+  case gait_generator::LLEG: i_param.support_leg_with_both = OpenHRP::AutoBalancerService::LLEG; break;
   default: break;
   }
   return true;
