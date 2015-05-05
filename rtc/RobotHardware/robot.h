@@ -127,8 +127,26 @@ public:
        \brief read voltage and current of the robot power source
        \param o_voltage voltage
        \param o_current current
+       \param o_battery remaining battery level ( new feature on 315.4.0)
      */
     void readPowerStatus(double &o_voltage, double &o_current);
+
+    /**
+       \brief read battery state
+       \param i_rank rank of battery
+       \param o_voltage voltage
+       \param o_current current
+       \param o_soc state of charge
+     */
+    void readBatteryState(unsigned int i_rank, double &o_voltage,
+                          double &o_current, double &o_soc);
+
+    /**
+       \brief read thermometer
+       \param i_rank rank of thermometer
+       \param o_temp temperature
+     */
+    void readThermometer(unsigned int i_rank, double &o_temp);
 
     /**
        \brief read array of all joint angles[rad]
@@ -221,6 +239,13 @@ public:
      */
     bool checkEmergency(emg_reason &o_reason, int &o_id);
 
+
+    /**
+       \brief check joint commands are valid or not
+       \return true if the joint command is invalid, false otherwise
+     */
+    bool checkJointCommands(const double *i_commands);
+
     /**
        \brief set the parcentage to the default servo gain
        \param name joint name, part name or "all"
@@ -250,6 +275,17 @@ public:
     int lengthDigitalOutput();
     bool readDigitalOutput(char *o_dout);
 
+    /**
+       \brief get the number of batteries
+       \return the number of batteries
+    */
+    int numBatteries();
+
+    /**
+       \brief get the number of thermometers
+       \return the number of thermometers
+    */
+    int numThermometers();
 private:
     /**
        \brief calibrate inertia sensor for one sampling period
