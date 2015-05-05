@@ -6,11 +6,11 @@ import rtm
 from rtm import *
 from OpenHRP import *
 from hrpsys import *  # load ModelLoader
+from hrpsys import ImpedanceControllerService_idl
 
 import socket
 import time
-
-from subprocess import check_output
+import subprocess
 
 # copy from transformations.py, Christoph Gohlke, The Regents of the University of California
 
@@ -254,6 +254,8 @@ class HrpsysConfigurator:
     # for setSelfGroups
     Groups = []  # [['torso', ['CHEST_JOINT0']], ['head', ['HEAD_JOINT0', 'HEAD_JOINT1']], ....]
 
+    hrpsys_version = None
+
     # public method
     def connectComps(self):
         '''!@brief
@@ -303,6 +305,7 @@ class HrpsysConfigurator:
             s_rate = filter(lambda s: s.type == 'RateGyro', self.sensors)
             if (len(s_rate) > 0) and self.rh.port(s_rate[0].name) != None:  # check existence of sensor ;; currently original HRP4C.xml has different naming rule of gsensor and gyrometer
                 connectPorts(self.rh.port(s_rate[0].name), self.kf.port("rate"))
+            connectPorts(self.rh.port("q"), self.kf.port("qCurrent"))
 
         # connection for rh
         if self.rh.port("servoState") != None:
@@ -538,7 +541,7 @@ class HrpsysConfigurator:
                 _, e, _ = sys.exc_info()
                 print(self.configurator_name + '\033[31mFail to deleteComps' + str(e) + '\033[0m')
 
-    def findComp(self, compName, instanceName, max_timeout_count=10):
+    def findComp(self, compName, instanceName, max_timeout_count=10, verbose=True):
         '''!@brief
         Find component(plugin) 
         
@@ -553,33 +556,37 @@ class HrpsysConfigurator:
             comp = rtm.findRTC(instanceName)
             if comp != None:
                 break
-            print(self.configurator_name + " find Comp wait for" + instanceName)
+            if verbose:
+                print(self.configurator_name + " find Comp wait for " + instanceName)
             time.sleep(1)
             timeout_count += 1
         if comp and comp.ref:
             version = comp.ref.get_component_profile().version
-        print(self.configurator_name + " find Comp    : %s = %s (%s)" % (instanceName, comp, version))
+        if verbose:
+            print(self.configurator_name + " find Comp    : %s = %s (%s)" % (instanceName, comp, version))
         if comp == None:
-            print(self.configurator_name + " Cannot find component: %s (%s)" % (instanceName, compName))
+            if verbose:
+                print(self.configurator_name + " Cannot find component: %s (%s)" % (instanceName, compName))
             return [None, None, None]
         comp_svc_port = comp.service("service0")
         if comp_svc_port:
             comp_svc = narrow(comp_svc_port, compName + "Service")
-            print(self.configurator_name + " find CompSvc : %s_svc = %s"%(instanceName, comp_svc))
+            if verbose:
+                print(self.configurator_name + " find CompSvc : %s_svc = %s"%(instanceName, comp_svc))
             return [comp, comp_svc, version]
         else:
             return [comp, None, version]
 
-    def findComps(self):
+    def findComps(self, max_timeout_count = 10, verbose=True):
         '''!@brief
         Check if all components in getRTCList() are created
         '''
-        max_timeout_count = 10
         for rn in self.getRTCList():
             rn2 = 'self.' + rn[0]
             if eval(rn2) == None:
-                create_str = "[self." + rn[0] + ", self." + rn[0] + "_svc, self." + rn[0] + "_version] = self.findComp(\"" + rn[1] + "\",\"" + rn[0] + "\"," + str(max_timeout_count) + ")"
-                print(self.configurator_name + create_str)
+                create_str = "[self." + rn[0] + ", self." + rn[0] + "_svc, self." + rn[0] + "_version] = self.findComp(\"" + rn[1] + "\",\"" + rn[0] + "\"," + str(max_timeout_count) + "," + str(verbose) + ")"
+                if verbose:
+                    print(self.configurator_name + create_str)
                 exec(create_str)
                 if eval(rn2) == None:
                     max_timeout_count = 0
@@ -645,7 +652,7 @@ class HrpsysConfigurator:
                            self.tc, self.el]
         return filter(lambda c: c != None, controller_list)  # only return existing controllers
 
-    def getRTCInstanceList(self):
+    def getRTCInstanceList(self, verbose=True):
         '''!@brief
         Get list of RTC Instance
         '''
@@ -656,18 +663,21 @@ class HrpsysConfigurator:
                 if eval(r): 
                     ret.append(eval(r))
                 else:
-                    print(self.configurator_name + '\033[31mFail to find instance ('+str(rtc)+') for getRTCInstanceList\033[0m')
+                    if verbose:
+                        print(self.configurator_name + '\033[31mFail to find instance ('+str(rtc)+') for getRTCInstanceList\033[0m')
             except Exception:
                 _, e, _ = sys.exc_info()
                 print(self.configurator_name + '\033[31mFail to getRTCInstanceList'+str(e)+'\033[0m')
         return ret
 
-    # private method to replace $(OPENHRP_DIR) or $(PROJECT_DIR)
+    # private method to replace $(PROJECT_DIR)
+    # PROJECT_DIR=(OpenHRP3  installed directory)/share/OpenHRP-3.1/sample/project
+    # see http://www.openrtp.jp/openhrp3/3.1.0.beta/jp/install_ubuntu.html
     def parseUrl(self, url):
-        if '$(OPENHRP_DIR)' in url:
-            url = url.replace('$(OPENHRP_DIR)', check_output(['pkg-config', 'openhrp3.1', '--variable=prefix']).rstrip())
         if '$(PROJECT_DIR)' in url:
-            url = url.replace('$(PROJECT_DIR)', check_output(['pkg-config', 'hrpsys-base', '--variable=prefix']).rstrip())
+            path = subprocess.Popen(['pkg-config', 'openhrp3.1', '--variable=prefix'], stdout=subprocess.PIPE).communicate()[0].rstrip()
+            path = os.path.join(path, 'share/OpenHRP-3.1/sample/project')
+            url = url.replace('$(PROJECT_DIR)', path)
         return url
 
     # public method to get bodyInfo
@@ -725,13 +735,16 @@ class HrpsysConfigurator:
             connectPorts(artc.port(sen_name), self.log.port(log_name))
 
     # public method to configure default logger data ports
-    def setupLogger(self):
+    def setupLogger(self, maxLength=4000):
         '''!@brief
         Setup logging function.
+        @param maxLength : max length of data from DataLogger.h #define DEFAULT_MAX_LOG_LENGTH (200*20)
+                           if the robot running at 200hz (5msec) 4000 means 20 secs
         '''
         if self.log == None:
             print(self.configurator_name + "\033[31m  setupLogger : self.log is not defined, please check rtcd.conf or rtcd arguments\033[0m")
             return
+        self.log_svc.maxLength(maxLength);
         #
         for pn in ['q', 'dq', 'tau']:
             self.connectLoggerPort(self.rh, pn)
@@ -1845,6 +1858,65 @@ dr=0, dp=0, dw=0, tm=10, wait=True):
         '''
         self.st_svc.stopStabilizer()
 
+    def startImpedance_315_4(self, arm,
+                       M_p = 100.0,
+                       D_p = 100.0,
+                       K_p = 100.0,
+                       M_r = 100.0,
+                       D_r = 2000.0,
+                       K_r = 2000.0,
+                       force_gain = [1, 1, 1],
+                       moment_gain = [0, 0, 0],
+                       sr_gain = 1.0,
+                       avoid_gain = 0.0,
+                       reference_gain = 0.0,
+                       manipulability_limit = 0.1,
+                       controller_mode = None,
+                       ik_optional_weight_vector = None):
+        '''!@brief
+        start impedance mode
+
+        @type arm: str name of artm to be controlled, this must be initialized using setSelfGroups()
+        '''
+        r, p = self.ic_svc.getImpedanceControllerParam(arm)
+        if not r:
+            print('{}, Failt to getImpedanceControllerParam({})'.format(self.configurator_name, arm))
+            return False
+        if M_p != None: p.M_p = M_p
+        if D_p != None: p.M_p = D_p
+        if K_p != None: p.M_p = K_p
+        if M_r != None: p.M_r = M_r
+        if D_r != None: p.M_r = D_r
+        if K_r != None: p.M_r = K_r
+        if force_gain != None: p.force_gain = force_gain
+        if moment_gain != None: p.moment_gain = moment_gain
+        if sr_gain != None: p.sr_gain = sr_gain
+        if avoid_gain != None: p.avoid_gain = avoid_gain
+        if reference_gain != None: p.reference_gain = reference_gain
+        if manipulability_limit != None: p.manipulability_limit = manipulability_limit
+        if controller_mode != None: p.controller_mode = controller_mode
+        if ik_optional_weight_vector != None: p.ik_optional_weight_vector = ik_optional_weight_vector
+        self.ic_svc.setImpedanceControllerParam(arm, p)
+        return self.ic_svc.startImpedanceController(arm)
+
+    def stopImpedance_315_4(self, arm):
+        '''!@brief
+        stop impedance mode
+        '''
+        return self.ic_svc.stopImpedanceController(arm)
+
+    def startImpedance(self, arm, **kwargs):
+        if self.hrpsys_version and self.hrpsys_version < '315.2.0':
+            print(self.configurator_name + '\033[31mstartImpedance: Try to connect unsupported RTC' + str(self.hrpsys_version) + '\033[0m')
+        else:
+            self.startImpedance_315_4(arm, **kwargs)
+
+    def stopImpedance(self, arm):
+        if self.hrpsys_version and self.hrpsys_version < '315.2.0':
+            print(self.configurator_name + '\033[31mstopImpedance: Try to connect unsupported RTC' + str(self.hrpsys_version) + '\033[0m')
+        else:
+            self.stopImpedance_315_4(arm)
+
     # ##
     # ## initialize
     # ##
@@ -1883,6 +1955,14 @@ dr=0, dp=0, dw=0, tm=10, wait=True):
         self.setSelfGroups()
 
         print(self.configurator_name + '\033[32minitialized successfully\033[0m')
+
+        # set hrpsys_version
+        try:
+            self.hrpsys_version = self.fk.ref.get_component_profile().version
+        except:
+            print(self.configurator_name + '\033[34mCould not get hrpsys_version\033[0m')
+
+            pass
 
     def __init__(self, cname="[hrpsys.py] "):
         initCORBA()
