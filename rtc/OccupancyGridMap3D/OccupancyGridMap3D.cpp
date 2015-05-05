@@ -159,19 +159,19 @@ RTC::ReturnCode_t OccupancyGridMap3D::onActivated(RTC::UniqueId ec_id)
 {
   std::cout << m_profile.instance_name<< ": onActivated(" << ec_id << ")" << std::endl;
 
+  Guard guard(m_mutex);
   if (m_knownMapPath != ""){
       m_knownMap = new OcTree(m_cwd+m_knownMapPath);
-      m_updateOut.write();
   }
 
   if (m_initialMap != ""){
     // Working directories of threads which calls onInitialize() and onActivate() are different on MacOS
     // Assume path of initial map is given by a relative path to working directory of the thread which calls onInitialize()
     m_map = new OcTree(m_cwd+m_initialMap);
-    m_updateOut.write();
   }else{
     m_map = new OcTree(m_resolution);
   }
+  m_updateOut.write();
 
   if(KDEBUG){
     std::cout << m_profile.instance_name << ": initial tree depth = " << m_map->getTreeDepth() << std::endl;
@@ -198,6 +198,7 @@ RTC::ReturnCode_t OccupancyGridMap3D::onActivated(RTC::UniqueId ec_id)
 RTC::ReturnCode_t OccupancyGridMap3D::onDeactivated(RTC::UniqueId ec_id)
 {
   std::cout << m_profile.instance_name<< ": onDeactivated(" << ec_id << ")" << std::endl;
+  Guard guard(m_mutex);
   delete m_map;
   if (m_knownMap) delete m_knownMap;
   return RTC::RTC_OK;

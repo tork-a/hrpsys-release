@@ -83,7 +83,7 @@ set(CPACK_PACKAGE_NAME hrpsys-base)
 set(CPACK_PACKAGE_VENDOR "AIST")
 set(CPACK_PACKAGE_CONTACT "Fumio Kanehiro <f-kanehiro@aist.go.jp>")
 set(CPACK_PACKAGE_VERSION_MAJOR 315)
-set(CPACK_PACKAGE_VERSION_MINOR 3)
+set(CPACK_PACKAGE_VERSION_MINOR 4)
 set(CPACK_PACKAGE_VERSION_PATCH 0)
 execute_process(
   COMMAND date +%Y%m%d%H%M
@@ -153,6 +153,13 @@ install(FILES
 
 add_definitions(-DHRPSYS_PACKAGE_VERSION=\"\\"${CPACK_PACKAGE_VERSION_MAJOR}.${CPACK_PACKAGE_VERSION_MINOR}.${CPACK_PACKAGE_VERSION_PATCH}\\"\")
 
+option(ROBOT_IOB_VERSION "Supported robot IOB version (lib/io/iob.h)")
+if("${ROBOT_IOB_VERSION}" STREQUAL "OFF")
+  set(ROBOT_IOB_VERSION 2)
+endif()
+add_definitions(-DROBOT_IOB_VERSION=${ROBOT_IOB_VERSION})
+message(STATUS "compile iob with -DROBOT_IOB_VERSION=${ROBOT_IOB_VERSION}")
+
 if(COMPILE_JAVA_STUFF)
   add_subdirectory(jython)
 endif()
@@ -174,6 +181,7 @@ add_subdirectory(test)
 #if catkin environment
 string(REGEX MATCH "catkin" need_catkin "$ENV{_}")
 if(need_catkin OR "${CATKIN_BUILD_BINARY_PACKAGE}")
+  install(CODE "file(WRITE \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/doc/hrpsys/rospack_nosubdirs)")
   install(FILES package.xml DESTINATION share/hrpsys/)
   install(CODE "
 execute_process(COMMAND cmake -E make_directory lib WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)

@@ -509,6 +509,27 @@ char *time_string()
     return time;
 }
 
+bool robot::checkJointCommands(const double *i_commands)
+{
+    int state;
+    for (int i=0; i<numJoints(); i++){
+        read_servo_state(i, &state);
+        if (state == ON && m_servoErrorLimit[i] != 0){
+            double angle, command=i_commands[i];
+            read_actual_angle(i, &angle);
+            if (fabs(angle-command) > m_servoErrorLimit[i]){
+                std::cerr << time_string()
+                          << ": servo error limit over: joint = " 
+		          << joint(i)->name
+		          << ", qRef = " << command/M_PI*180 << "[deg], q = " 
+		          << angle/M_PI*180 << "[deg]" << std::endl;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool robot::checkEmergency(emg_reason &o_reason, int &o_id)
 {
     int state;
@@ -703,5 +724,42 @@ int robot::lengthDigitalOutput()
 bool robot::readDigitalOutput(char *o_dout)
 {
     return read_digital_output(o_dout);
+}
+
+void robot::readBatteryState(unsigned int i_rank, double &voltage, 
+                             double &current, double &soc)
+{
+#if defined(ROBOT_IOB_VERSION) && ROBOT_IOB_VERSION >= 2
+    read_battery(i_rank, &voltage, &current, &soc);
+#else
+    voltage=0; current=0; soc=0;
+#endif
+}
+
+int robot::numBatteries()
+{
+#if defined(ROBOT_IOB_VERSION) && ROBOT_IOB_VERSION >= 2
+    return number_of_batteries();
+#else
+    return 0;
+#endif
+}
+
+void robot::readThermometer(unsigned int i_rank, double &o_temp)
+{
+#if defined(ROBOT_IOB_VERSION) && ROBOT_IOB_VERSION >= 2
+    read_temperature(i_rank, &o_temp);
+#else
+    o_temp=0;
+#endif
+}
+
+int robot::numThermometers()
+{
+#if defined(ROBOT_IOB_VERSION) && ROBOT_IOB_VERSION >= 2
+    return number_of_thermometers();
+#else
+    return 0;
+#endif
 }
 
