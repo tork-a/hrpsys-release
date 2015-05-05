@@ -1,4 +1,4 @@
-From 8e69f02479b8830a02e3d3f192e3af86ea69058f Mon Sep 17 00:00:00 2001
+From 8a31c6a01ca2aa113ab068b1e91db50c682e5066 Mon Sep 17 00:00:00 2001
 From: Kei Okada <kei.okada@gmail.com>
 Date: Sun, 15 Mar 2015 15:00:53 +0900
 Subject: [PATCH] CMakeLists.txt: display doxygen for ros-release
