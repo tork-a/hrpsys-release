@@ -1,17 +1,17 @@
-From 8a31c6a01ca2aa113ab068b1e91db50c682e5066 Mon Sep 17 00:00:00 2001
+From 811ad6ede8046eb0d3b2530a154441c6464e0521 Mon Sep 17 00:00:00 2001
 From: Kei Okada <kei.okada@gmail.com>
 Date: Sun, 15 Mar 2015 15:00:53 +0900
 Subject: [PATCH] CMakeLists.txt: display doxygen for ros-release
 
 ---
- CMakeLists.txt | 2 +-
+ CMakeLists.txt |    2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 31245ff..4127dea 100644
+index e69a43e..0fd4e1c 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -161,7 +161,7 @@ add_subdirectory(idl)
+@@ -168,7 +168,7 @@ add_subdirectory(idl)
  add_subdirectory(lib)
  add_subdirectory(ec)
  add_subdirectory(rtc)
@@ -21,5 +21,5 @@ index 31245ff..4127dea 100644
    add_subdirectory(doc)
  endif()
 -- 
-1.9.1
+1.7.9.5
 
