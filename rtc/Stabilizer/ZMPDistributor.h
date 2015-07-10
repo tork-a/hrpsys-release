@@ -51,29 +51,31 @@ public:
 class SimpleZMPDistributor
 {
     FootSupportPolygon fs;
-    double leg_inside_margin, leg_front_margin, leg_rear_margin, wrench_alpha_blending;
+    double leg_inside_margin, leg_outside_margin, leg_front_margin, leg_rear_margin, wrench_alpha_blending, alpha_cutoff_freq;
+    double prev_alpha;
 public:
-    SimpleZMPDistributor () : wrench_alpha_blending (0.5)
+    SimpleZMPDistributor () : wrench_alpha_blending (0.5), alpha_cutoff_freq(1e7), // Almost no filter by default
+                              prev_alpha (0.5)
     {
     };
 
-    inline bool is_inside_foot (const hrp::Vector3& leg_pos, const bool is_lleg)
+    inline bool is_inside_foot (const hrp::Vector3& leg_pos, const bool is_lleg, const double margin = 0.0)
     {
-        if (is_lleg) return leg_pos(1) >= -1 * leg_inside_margin;
-        else return leg_pos(1) <= leg_inside_margin;
+        if (is_lleg) return (leg_pos(1) >= (-1 * leg_inside_margin + margin)) && (leg_pos(1) <= (leg_outside_margin - margin));
+        else return (leg_pos(1) <= (leg_inside_margin - margin)) && (leg_pos(1) >= (-1 * leg_outside_margin + margin));
     };
-    inline bool is_front_of_foot (const hrp::Vector3& leg_pos)
+    inline bool is_front_of_foot (const hrp::Vector3& leg_pos, const double margin = 0.0)
     {
-        return leg_pos(0) >= leg_front_margin;
+        return leg_pos(0) >= (leg_front_margin - margin);
     };
-    inline bool is_rear_of_foot (const hrp::Vector3& leg_pos)
+    inline bool is_rear_of_foot (const hrp::Vector3& leg_pos, const double margin = 0.0)
     {
-        return leg_pos(0) <= -1 * leg_rear_margin;
+        return leg_pos(0) <= (-1 * leg_rear_margin + margin);
     };
     void print_params (const std::string& str)
     {
-        std::cerr << "[" << str << "]   leg_inside_margin = " << leg_inside_margin << "[m], leg_front_margin = " << leg_front_margin << "[m], leg_rear_margin = " << leg_rear_margin << "[m]" << std::endl;
-        std::cerr << "[" << str << "]   wrench_alpha_blending = " << wrench_alpha_blending << std::endl;
+        std::cerr << "[" << str << "]   leg_inside_margin = " << leg_inside_margin << "[m], leg_outside_margin = " << leg_outside_margin << "[m], leg_front_margin = " << leg_front_margin << "[m], leg_rear_margin = " << leg_rear_margin << "[m]" << std::endl;
+        std::cerr << "[" << str << "]   wrench_alpha_blending = " << wrench_alpha_blending << ", alpha_cutoff_freq = " << alpha_cutoff_freq << "[Hz]" << std::endl;
     }
     void print_vertices (const std::string& str)
     {
@@ -84,6 +86,8 @@ public:
     void set_leg_front_margin (const double a) { leg_front_margin = a; };
     void set_leg_rear_margin (const double a) { leg_rear_margin = a; };
     void set_leg_inside_margin (const double a) { leg_inside_margin = a; };
+    void set_leg_outside_margin (const double a) { leg_outside_margin = a; };
+    void set_alpha_cutoff_freq (const double a) { alpha_cutoff_freq = a; };
     void set_vertices (const std::vector<std::vector<Eigen::Vector2d> >& vs)
     {
         fs.set_vertices(vs);
@@ -94,13 +98,24 @@ public:
     void set_vertices_from_margin_params ()
     {
         std::vector<std::vector<Eigen::Vector2d> > vec;
-        std::vector<Eigen::Vector2d> tvec;
-        tvec.push_back(Eigen::Vector2d(leg_front_margin, leg_inside_margin));
-        tvec.push_back(Eigen::Vector2d(leg_front_margin, -1*leg_inside_margin));
-        tvec.push_back(Eigen::Vector2d(-1*leg_rear_margin, -1*leg_inside_margin));
-        tvec.push_back(Eigen::Vector2d(-1*leg_rear_margin, leg_inside_margin));
-        vec.push_back(tvec);
-        vec.push_back(tvec);
+        // RLEG
+        {
+            std::vector<Eigen::Vector2d> tvec;
+            tvec.push_back(Eigen::Vector2d(leg_front_margin, leg_inside_margin));
+            tvec.push_back(Eigen::Vector2d(leg_front_margin, -1*leg_outside_margin));
+            tvec.push_back(Eigen::Vector2d(-1*leg_rear_margin, -1*leg_outside_margin));
+            tvec.push_back(Eigen::Vector2d(-1*leg_rear_margin, leg_inside_margin));
+            vec.push_back(tvec);
+        }
+        // LLEG
+        {
+            std::vector<Eigen::Vector2d> tvec;
+            tvec.push_back(Eigen::Vector2d(leg_front_margin, leg_outside_margin));
+            tvec.push_back(Eigen::Vector2d(leg_front_margin, -1*leg_inside_margin));
+            tvec.push_back(Eigen::Vector2d(-1*leg_rear_margin, -1*leg_inside_margin));
+            tvec.push_back(Eigen::Vector2d(-1*leg_rear_margin, leg_outside_margin));
+            vec.push_back(tvec);
+        }
         set_vertices(vec);
     };
     // getter
@@ -108,6 +123,8 @@ public:
     double get_leg_front_margin () { return leg_front_margin; };
     double get_leg_rear_margin () { return leg_rear_margin; };
     double get_leg_inside_margin () { return leg_inside_margin; };
+    double get_leg_outside_margin () { return leg_outside_margin; };
+    double get_alpha_cutoff_freq () { return alpha_cutoff_freq; };
     void get_vertices (std::vector<std::vector<Eigen::Vector2d> >& vs) { fs.get_vertices(vs); };
     //
     double calcAlpha (const hrp::Vector3& tmprefzmp,
@@ -156,6 +173,9 @@ public:
             hrp::Vector3 difp = redge_foot - ledge_foot;
             alpha = difp.dot(tmprefzmp-ledge_foot)/difp.squaredNorm();
         }
+        // limit
+        if (alpha>1.0) alpha = 1.0;
+        if (alpha<0.0) alpha = 0.0;
         return alpha;
     };
 
@@ -164,11 +184,15 @@ public:
                                       const std::vector<hrp::Vector3>& cop_pos,
                                       const std::vector<hrp::Matrix33>& ee_rot,
                                       const hrp::Vector3& new_refzmp, const hrp::Vector3& ref_zmp,
-                                      const double total_fz, const bool printp = true, const std::string& print_str = "")
+                                      const double total_fz, const double dt, const bool printp = true, const std::string& print_str = "")
     {
-        //double fz_alpha =  calcAlpha(hrp::Vector3(foot_origin_rot * ref_zmp + foot_origin_pos), ee_pos, ee_rot);
         double fz_alpha =  calcAlpha(ref_zmp, ee_pos, ee_rot);
-        double alpha = calcAlpha(new_refzmp, ee_pos, ee_rot);
+        double tmpalpha = calcAlpha(new_refzmp, ee_pos, ee_rot), alpha;
+        // LPF
+        double const_param = 2 * M_PI * alpha_cutoff_freq * dt;
+        alpha = 1.0/(1+const_param) * prev_alpha + const_param/(1+const_param) * tmpalpha;
+        prev_alpha = tmpalpha;
+        // Blending
         fz_alpha = wrench_alpha_blending * fz_alpha + (1-wrench_alpha_blending) * alpha;
         ref_foot_force[0] = hrp::Vector3(0,0, fz_alpha * total_fz);
         ref_foot_force[1] = hrp::Vector3(0,0, (1-fz_alpha) * total_fz);
@@ -196,38 +220,44 @@ public:
         }
         {
             // Foot-distribution-coords frame =>
-            hrp::Vector3 foot_dist_coords_y = (cop_pos[1] - cop_pos[0]); // e_y'
-            foot_dist_coords_y(2) = 0.0;
-            foot_dist_coords_y.normalize();
-            hrp::Vector3 foot_dist_coords_x = hrp::Vector3(foot_dist_coords_y.cross(hrp::Vector3::UnitZ())); // e_x'
-            hrp::Matrix33 foot_dist_coords_rot;
-            foot_dist_coords_rot(0,0) = foot_dist_coords_x(0);
-            foot_dist_coords_rot(1,0) = foot_dist_coords_x(1);
-            foot_dist_coords_rot(2,0) = foot_dist_coords_x(2);
-            foot_dist_coords_rot(0,1) = foot_dist_coords_y(0);
-            foot_dist_coords_rot(1,1) = foot_dist_coords_y(1);
-            foot_dist_coords_rot(2,1) = foot_dist_coords_y(2);
-            foot_dist_coords_rot(0,2) = 0;
-            foot_dist_coords_rot(1,2) = 0;
-            foot_dist_coords_rot(2,2) = 1;
-            hrp::Vector3 tau_0_f = foot_dist_coords_rot.transpose() * tau_0; // tau_0'
-            // x
-            //         // right
-            //         if (tau_0_f(0) > 0) ref_foot_moment[0](0) = tau_0_f(0);
-            //         else ref_foot_moment[0](0) = 0;
-            //         // left
-            //         if (tau_0_f(0) > 0) ref_foot_moment[1](0) = 0;
-            //         else ref_foot_moment[1](0) = tau_0_f(0);
-            ref_foot_moment[0](0) = tau_0_f(0) * alpha;
-            ref_foot_moment[1](0) = tau_0_f(0) * (1-alpha);
-            // y
-            ref_foot_moment[0](1) = tau_0_f(1) * alpha;
-            ref_foot_moment[1](1) = tau_0_f(1) * (1-alpha);
-            ref_foot_moment[0](2) = ref_foot_moment[1](2) = 0.0;
-            // <= Foot-distribution-coords frame
-            // Convert foot-distribution-coords frame => actual world frame
-            ref_foot_moment[0] = foot_dist_coords_rot * ref_foot_moment[0];
-            ref_foot_moment[1] = foot_dist_coords_rot * ref_foot_moment[1];
+//             hrp::Vector3 foot_dist_coords_y = (cop_pos[1] - cop_pos[0]); // e_y'
+//             foot_dist_coords_y(2) = 0.0;
+//             foot_dist_coords_y.normalize();
+//             hrp::Vector3 foot_dist_coords_x = hrp::Vector3(foot_dist_coords_y.cross(hrp::Vector3::UnitZ())); // e_x'
+//             hrp::Matrix33 foot_dist_coords_rot;
+//             foot_dist_coords_rot(0,0) = foot_dist_coords_x(0);
+//             foot_dist_coords_rot(1,0) = foot_dist_coords_x(1);
+//             foot_dist_coords_rot(2,0) = foot_dist_coords_x(2);
+//             foot_dist_coords_rot(0,1) = foot_dist_coords_y(0);
+//             foot_dist_coords_rot(1,1) = foot_dist_coords_y(1);
+//             foot_dist_coords_rot(2,1) = foot_dist_coords_y(2);
+//             foot_dist_coords_rot(0,2) = 0;
+//             foot_dist_coords_rot(1,2) = 0;
+//             foot_dist_coords_rot(2,2) = 1;
+//             hrp::Vector3 tau_0_f = foot_dist_coords_rot.transpose() * tau_0; // tau_0'
+//             // x
+//             //         // right
+//             //         if (tau_0_f(0) > 0) ref_foot_moment[0](0) = tau_0_f(0);
+//             //         else ref_foot_moment[0](0) = 0;
+//             //         // left
+//             //         if (tau_0_f(0) > 0) ref_foot_moment[1](0) = 0;
+//             //         else ref_foot_moment[1](0) = tau_0_f(0);
+//             ref_foot_moment[0](0) = tau_0_f(0) * alpha;
+//             ref_foot_moment[1](0) = tau_0_f(0) * (1-alpha);
+//             // y
+//             ref_foot_moment[0](1) = tau_0_f(1) * alpha;
+//             ref_foot_moment[1](1) = tau_0_f(1) * (1-alpha);
+//             ref_foot_moment[0](2) = ref_foot_moment[1](2) = 0.0;
+//             // <= Foot-distribution-coords frame
+//             // Convert foot-distribution-coords frame => actual world frame
+//             ref_foot_moment[0] = foot_dist_coords_rot * ref_foot_moment[0];
+//             ref_foot_moment[1] = foot_dist_coords_rot * ref_foot_moment[1];
+            //
+          ref_foot_moment[0](0) = tau_0(0) * alpha;
+          ref_foot_moment[1](0) = tau_0(0) * (1-alpha);
+          ref_foot_moment[0](1) = tau_0(1) * alpha;
+          ref_foot_moment[1](1) = tau_0(1) * (1-alpha);
+          ref_foot_moment[0](2) = ref_foot_moment[1](2)= 0.0;
         }
 #if 0
         {
@@ -326,11 +356,20 @@ public:
                                         const std::vector<hrp::Vector3>& cop_pos,
                                         const std::vector<hrp::Matrix33>& ee_rot,
                                         const hrp::Vector3& new_refzmp, const hrp::Vector3& ref_zmp,
-                                        const double total_fz, const bool printp = true, const std::string& print_str = "")
+                                        const double total_fz, const double dt, const bool printp = true, const std::string& print_str = "")
     {
+        double fz_alpha =  calcAlpha(ref_zmp, ee_pos, ee_rot);
+        double tmpalpha = calcAlpha(new_refzmp, ee_pos, ee_rot), alpha;
+        // LPF
+        double const_param = 2 * M_PI * alpha_cutoff_freq * dt;
+        alpha = 1.0/(1+const_param) * prev_alpha + const_param/(1+const_param) * tmpalpha;
+        prev_alpha = tmpalpha;
+        // Blending
+        fz_alpha = wrench_alpha_blending * fz_alpha + (1-wrench_alpha_blending) * alpha;
+
+        // QP
         double norm_weight = 1e-7;
         double cop_weight = 1e-3;
-        double alpha = calcAlpha(new_refzmp, ee_pos, ee_rot);
         hrp::dvector total_fm(3);
         total_fm(0) = total_fz;
         total_fm(1) = 0;
@@ -346,11 +385,22 @@ public:
         //
         hrp::dmatrix Hmat(state_dim,state_dim);
         hrp::dvector gvec(state_dim);
+        double alpha_thre = 1e-20;
         for (size_t i = 0; i < state_dim; i++) {
             gvec(i) = 0.0;
             for (size_t j = 0; j < state_dim; j++) {
-                if (i == j) Hmat(i,j) = norm_weight;
-                else Hmat(i,j) = 0.0;
+                if (i == j) {
+                    if (i < state_dim_half) {
+                        double tmpa = (fz_alpha < alpha_thre) ? 1/alpha_thre : 1/fz_alpha;
+                        Hmat(i,j) = norm_weight*tmpa;
+                    } else {
+                        double tmpa = (1-fz_alpha < alpha_thre) ? 1/alpha_thre : 1/(1-fz_alpha);
+                        Hmat(i,j) = norm_weight*tmpa;
+                    }
+                    //Hmat(i,j) = norm_weight;
+                } else {
+                    Hmat(i,j) = 0.0;
+                }
             }
         }
         //
@@ -365,8 +415,8 @@ public:
                 mm[fidx](0,i) = 1.0;
                 mm[fidx](1,i) = -(fpos[fidx](1)-cop_pos[fidx](1));
                 mm[fidx](2,i) = (fpos[fidx](0)-cop_pos[fidx](0));
-                Gmat(1,i+state_dim_half*fidx) = (fpos[fidx](1)-new_refzmp(1));
-                Gmat(2,i+state_dim_half*fidx) = -(fpos[fidx](0)-new_refzmp(0));
+                Gmat(1,i+state_dim_half*fidx) = -(fpos[fidx](1)-new_refzmp(1));
+                Gmat(2,i+state_dim_half*fidx) = (fpos[fidx](0)-new_refzmp(0));
             }
             //std::cerr << "fpos " << fpos[0] << " " << fpos[1] << std::endl;
         }
@@ -473,9 +523,11 @@ public:
             ref_foot_force[fidx] = hrp::Vector3(0,0,tmpv(0));
             ref_foot_moment[fidx] = hrp::Vector3(tmpv(1),tmpv(2),0);
         }
+        ref_foot_moment[0] = -1 * ref_foot_moment[0];
+        ref_foot_moment[1] = -1 * ref_foot_moment[1];
         if (printp) {
-            std::cerr << "[" << print_str << "] force moment distribution" << std::endl;
-            //std::cerr << "[" << print_str << "]   alpha = " << alpha << ", fz_alpha = " << fz_alpha << std::endl;
+            std::cerr << "[" << print_str << "] force moment distribution (QP)" << std::endl;
+            std::cerr << "[" << print_str << "]   alpha = " << alpha << ", fz_alpha = " << fz_alpha << std::endl;
             // std::cerr << "[" << print_str << "]   "
             //           << "total_tau    = " << hrp::Vector3(tau_0).format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "[", "]")) << "[Nm]" << std::endl;
             std::cerr << "[" << print_str << "]   "
@@ -487,6 +539,19 @@ public:
             std::cerr << "[" << print_str << "]   "
                       << "ref_moment_L = " << hrp::Vector3(ref_foot_moment[1]).format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "[", "]")) << "[Nm]" << std::endl;
         }
+    };
+#else
+    void distributeZMPToForceMomentsQP (hrp::Vector3* ref_foot_force, hrp::Vector3* ref_foot_moment,
+                                        const std::vector<hrp::Vector3>& ee_pos,
+                                        const std::vector<hrp::Vector3>& cop_pos,
+                                        const std::vector<hrp::Matrix33>& ee_rot,
+                                        const hrp::Vector3& new_refzmp, const hrp::Vector3& ref_zmp,
+                                        const double total_fz, const double dt, const bool printp = true, const std::string& print_str = "")
+    {
+        distributeZMPToForceMoments(ref_foot_force, ref_foot_moment,
+                                    ee_pos, cop_pos, ee_rot,
+                                    new_refzmp, ref_zmp,
+                                    total_fz, dt, printp, print_str);
     };
 #endif // USE_QPOASES
 };
