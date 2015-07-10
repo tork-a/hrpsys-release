@@ -35,7 +35,6 @@ static const char* stabilizer_spec[] =
   };
 // </rtc-template>
 
-#define MAX_TRANSITION_COUNT (2/dt)
 static double vlimit(double value, double llimit_value, double ulimit_value);
 static double switching_inpact_absorber(double force, double lower_th, double upper_th);
 
@@ -53,10 +52,13 @@ Stabilizer::Stabilizer(RTC::Manager* manager)
     m_baseRpyIn("baseRpyIn", m_baseRpy),
     m_contactStatesIn("contactStates", m_contactStates),
     m_controlSwingSupportTimeIn("controlSwingSupportTime", m_controlSwingSupportTime),
+    m_qRefSeqIn("qRefSeq", m_qRefSeq),
     m_qRefOut("q", m_qRef),
     m_tauOut("tau", m_tau),
     m_zmpOut("zmp", m_zmp),
     m_actContactStatesOut("actContactStates", m_actContactStates),
+    m_COPInfoOut("COPInfo", m_COPInfo),
+    m_emergencySignalOut("emergencySignal", m_emergencySignal),
     // for debug output
     m_originRefZmpOut("originRefZmp", m_originRefZmp),
     m_originRefCogOut("originRefCog", m_originRefCog),
@@ -75,6 +77,7 @@ Stabilizer::Stabilizer(RTC::Manager* manager)
     m_debugDataOut("debugData", m_debugData),
     control_mode(MODE_IDLE),
     st_algorithm(OpenHRP::StabilizerService::TPCC),
+    emergency_check_mode(OpenHRP::StabilizerService::NO_CHECK),
     szd(NULL),
     // </rtc-template>
     m_debugLevel(0)
@@ -108,12 +111,15 @@ RTC::ReturnCode_t Stabilizer::onInitialize()
   addInPort("baseRpyIn", m_baseRpyIn);
   addInPort("contactStates", m_contactStatesIn);
   addInPort("controlSwingSupportTime", m_controlSwingSupportTimeIn);
+  addInPort("qRefSeq", m_qRefSeqIn);
 
   // Set OutPort buffer
   addOutPort("q", m_qRefOut);
   addOutPort("tau", m_tauOut);
   addOutPort("zmp", m_zmpOut);
   addOutPort("actContactStates", m_actContactStatesOut);
+  addOutPort("COPInfo", m_COPInfoOut);
+  addOutPort("emergencySignal", m_emergencySignalOut);
   // for debug output
   addOutPort("originRefZmp", m_originRefZmpOut);
   addOutPort("originRefCog", m_originRefCogOut);
@@ -221,8 +227,11 @@ RTC::ReturnCode_t Stabilizer::onInitialize()
           jpe_v.back()->setOptionalWeightVector(optw);
       }
       target_ee_p.push_back(hrp::Vector3::Zero());
-      target_ee_diff_p.push_back(hrp::Vector3::Zero());
       target_ee_R.push_back(hrp::Matrix33::Identity());
+      target_ee_diff_p.push_back(hrp::Vector3::Zero());
+      prev_target_ee_diff_p.push_back(hrp::Vector3::Zero());
+      target_ee_diff_r.push_back(hrp::Vector3::Zero());
+      prev_target_ee_diff_r.push_back(hrp::Vector3::Zero());
       contact_states_index_map.insert(std::pair<std::string, size_t>(ee_name, i));
       is_ik_enable.push_back( (ee_name.find("leg") != std::string::npos ? true : false) ); // Hands ik => disabled, feet ik => enabled, by default
       std::cerr << "[" << m_profile.instance_name << "] End Effector [" << ee_name << "]" << std::endl;
@@ -263,6 +272,11 @@ RTC::ReturnCode_t Stabilizer::onInitialize()
   eefm_cogvel_cutoff_freq = 4.0; //[Hz]
   //fm_wrench_alpha_blending = 1.0; // fz_alpha
   eefm_gravitational_acceleration = 9.80665; // [m/s^2]
+  eefm_ee_pos_error_p_gain = 0;
+  eefm_ee_rot_error_p_gain = 0;
+  eefm_ee_error_cutoff_freq = 50.0; // [Hz]
+  cop_check_margin = 20.0*1e-3; // [m]
+  cp_check_margin = 60.0*1e-3; // [m]
 
   // parameters for RUNST
   double ke = 0, tc = 0;
@@ -283,6 +297,7 @@ RTC::ReturnCode_t Stabilizer::onInitialize()
       hrp::Sensor* sen= m_robot->sensor<hrp::ForceSensor>(stikp[i].sensor_name);
       if ( sen != NULL ) is_legged_robot = true;
   }
+  is_emergency = false;
 
   m_qCurrent.data.length(m_robot->numJoints());
   m_qRef.data.length(m_robot->numJoints());
@@ -300,6 +315,13 @@ RTC::ReturnCode_t Stabilizer::onInitialize()
     prev_contact_states.push_back(true);
     m_actContactStates.data[i] = false;
   }
+  m_COPInfo.data.length(m_contactStates.data.length()*3); // nx, ny, fz for each end-effectors
+  for (size_t i = 0; i < m_COPInfo.data.length(); i++) {
+      m_COPInfo.data[i] = 0.0;
+  }
+  transition_time = 2.0;
+  foot_origin_offset[0] = hrp::Vector3::Zero();
+  foot_origin_offset[1] = hrp::Vector3::Zero();
 
   // for debug output
   m_originRefZmp.data.x = m_originRefZmp.data.y = m_originRefZmp.data.z = 0.0;
@@ -412,14 +434,22 @@ RTC::ReturnCode_t Stabilizer::onExecute(RTC::UniqueId ec_id)
   for (size_t i = 0; i < m_limbCOPOffsetIn.size(); ++i) {
     if ( m_limbCOPOffsetIn[i]->isNew() ) {
       m_limbCOPOffsetIn[i]->read();
-      stikp[i].localCOPPos = stikp[i].localp + stikp[i].localR * hrp::Vector3(m_limbCOPOffset[i].data.x, m_limbCOPOffset[i].data.y, m_limbCOPOffset[i].data.z);
+      //stikp[i].localCOPPos = stikp[i].localp + stikp[i].localR * hrp::Vector3(m_limbCOPOffset[i].data.x, m_limbCOPOffset[i].data.y, m_limbCOPOffset[i].data.z);
+      stikp[i].localCOPPos = stikp[i].localp + stikp[i].localR * hrp::Vector3(m_limbCOPOffset[i].data.x, 0, m_limbCOPOffset[i].data.z);
     }
+  }
+  if (m_qRefSeqIn.isNew()) {
+    m_qRefSeqIn.read();
+    is_seq_interpolating = true;
+  } else {
+    is_seq_interpolating = false;
   }
 
   if (is_legged_robot) {
     getCurrentParameters();
     getTargetParameters();
     getActualParameters();
+    calcStateForEmergencySignal();
     switch (control_mode) {
     case MODE_IDLE:
       break;
@@ -427,7 +457,7 @@ RTC::ReturnCode_t Stabilizer::onExecute(RTC::UniqueId ec_id)
       if ( transition_count == 0 && on_ground ) sync_2_st();
       break;
     case MODE_ST:
-      if (st_algorithm == OpenHRP::StabilizerService::EEFM) {
+      if (st_algorithm == OpenHRP::StabilizerService::EEFM || st_algorithm == OpenHRP::StabilizerService::EEFMQP) {
         calcEEForceMomentControl();
       } else {
         calcTPCC();
@@ -456,6 +486,8 @@ RTC::ReturnCode_t Stabilizer::onExecute(RTC::UniqueId ec_id)
       m_zmpOut.write();
       m_actContactStates.tm = m_qRef.tm;
       m_actContactStatesOut.write();
+      m_COPInfo.tm = m_qRef.tm;
+      m_COPInfoOut.write();
       //m_tauOut.write();
       // for debug output
       m_originRefZmp.data.x = ref_zmp(0); m_originRefZmp.data.y = ref_zmp(1); m_originRefZmp.data.z = ref_zmp(2);
@@ -498,6 +530,10 @@ RTC::ReturnCode_t Stabilizer::onExecute(RTC::UniqueId ec_id)
       m_debugDataOut.write();
     }
     m_qRefOut.write();
+    // emergencySignal
+    if (is_emergency) {
+        m_emergencySignalOut.write();
+    }
   }
 
   return RTC::RTC_OK;
@@ -520,7 +556,7 @@ void Stabilizer::calcFootOriginCoords (hrp::Vector3& foot_origin_pos, hrp::Matri
   for (size_t i = 0; i < stikp.size(); i++) {
     if (stikp[i].ee_name.find("leg") == std::string::npos) continue;
     hrp::Link* target = m_robot->sensor<hrp::ForceSensor>(stikp[i].sensor_name)->link;
-    leg_c[i].pos = target->p;
+    leg_c[i].pos = target->p + target->R * foot_origin_offset[i];
     hrp::Vector3 xv1(target->R * ex);
     xv1(2)=0.0;
     xv1.normalize();
@@ -548,7 +584,7 @@ void Stabilizer::getActualParameters ()
   // Actual world frame =>
   hrp::Vector3 foot_origin_pos;
   hrp::Matrix33 foot_origin_rot;
-  if (st_algorithm == OpenHRP::StabilizerService::EEFM) {
+  if (st_algorithm == OpenHRP::StabilizerService::EEFM || st_algorithm == OpenHRP::StabilizerService::EEFMQP) {
     // update by current joint angles
     for ( int i = 0; i < m_robot->numJoints(); i++ ){
       m_robot->joint(i)->q = m_qCurrent.data[i];
@@ -576,7 +612,7 @@ void Stabilizer::getActualParameters ()
   act_cog = m_robot->calcCM();
   // zmp
   on_ground = false;
-  if (st_algorithm == OpenHRP::StabilizerService::EEFM) {
+  if (st_algorithm == OpenHRP::StabilizerService::EEFM || st_algorithm == OpenHRP::StabilizerService::EEFMQP) {
     on_ground = calcZMP(act_zmp, zmp_origin_off+foot_origin_pos(2));
   } else {
     on_ground = calcZMP(act_zmp, ref_zmp(2));
@@ -588,7 +624,7 @@ void Stabilizer::getActualParameters ()
 
   // convert absolute (in st) -> root-link relative
   rel_act_zmp = m_robot->rootLink()->R.transpose() * (act_zmp - m_robot->rootLink()->p);
-  if (st_algorithm == OpenHRP::StabilizerService::EEFM) {
+  if (st_algorithm == OpenHRP::StabilizerService::EEFM || st_algorithm == OpenHRP::StabilizerService::EEFMQP) {
     // Actual foot_origin frame =>
     act_zmp = foot_origin_rot.transpose() * (act_zmp - foot_origin_pos);
     act_cog = foot_origin_rot.transpose() * (act_cog - foot_origin_pos);
@@ -606,7 +642,8 @@ void Stabilizer::getActualParameters ()
     //act_root_rot = m_robot->rootLink()->R;
     for (size_t i = 0; i < stikp.size(); i++) {
       hrp::Link* target = m_robot->link(stikp[i].target_name);
-      hrp::Vector3 act_ee_p = target->p + target->R * stikp[i].localCOPPos;
+      //hrp::Vector3 act_ee_p = target->p + target->R * stikp[i].localCOPPos;
+      hrp::Vector3 act_ee_p = target->p + target->R * stikp[i].localp;
       //target_ee_R[i] = target->R * stikp[i].localR;
       target_ee_diff_p[i] -= foot_origin_rot.transpose() * (act_ee_p - foot_origin_pos);
     }
@@ -669,11 +706,20 @@ void Stabilizer::getActualParameters ()
           std::cerr << ", cop_pos_L    = " << hrp::Vector3(tmpp*1e3).format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "[", "]")) << "[mm]" << std::endl;
       }
 
-      szd->distributeZMPToForceMoments(ref_foot_force, ref_foot_moment,
-                                       ee_pos, cop_pos, ee_rot,
-                                       new_refzmp, hrp::Vector3(foot_origin_rot * ref_zmp + foot_origin_pos),
-                                       eefm_gravitational_acceleration * total_mass,
-                                       DEBUGP, std::string(m_profile.instance_name));
+      // Ref force and moment at COP
+      if (st_algorithm == OpenHRP::StabilizerService::EEFM) {
+          szd->distributeZMPToForceMoments(ref_foot_force, ref_foot_moment,
+                                           ee_pos, cop_pos, ee_rot,
+                                           new_refzmp, hrp::Vector3(foot_origin_rot * ref_zmp + foot_origin_pos),
+                                           eefm_gravitational_acceleration * total_mass, dt,
+                                           DEBUGP, std::string(m_profile.instance_name));
+      } else if (st_algorithm == OpenHRP::StabilizerService::EEFMQP) {
+          szd->distributeZMPToForceMomentsQP(ref_foot_force, ref_foot_moment,
+                                             ee_pos, cop_pos, ee_rot,
+                                             new_refzmp, hrp::Vector3(foot_origin_rot * ref_zmp + foot_origin_pos),
+                                             eefm_gravitational_acceleration * total_mass, dt,
+                                             DEBUGP, std::string(m_profile.instance_name));
+      }
       // for debug output
       new_refzmp = foot_origin_rot.transpose() * (new_refzmp - foot_origin_pos);
     }
@@ -697,17 +743,25 @@ void Stabilizer::getActualParameters ()
         if (ikp.ee_name.find("leg") == std::string::npos) continue;
         hrp::Sensor* sensor = m_robot->sensor<hrp::ForceSensor>(ikp.sensor_name);
         hrp::Link* target = m_robot->link(ikp.target_name);
+        // Convert moment at COP => moment at ee
+        if (ikp.ee_name=="rleg") {
+          ref_foot_moment[0] = ref_foot_moment[0] + ((target->R * ikp.localCOPPos + target->p) - (target->R * ikp.localp + target->p)).cross(ref_foot_force[0]);
+        } else if (ikp.ee_name=="lleg") {
+          ref_foot_moment[1] = ref_foot_moment[1] + ((target->R * ikp.localCOPPos + target->p) - (target->R * ikp.localp + target->p)).cross(ref_foot_force[1]);
+        }
         // Actual world frame =>
         hrp::Vector3 sensor_force = (sensor->link->R * sensor->localR) * hrp::Vector3(m_force[i].data[0], m_force[i].data[1], m_force[i].data[2]);
         hrp::Vector3 sensor_moment = (sensor->link->R * sensor->localR) * hrp::Vector3(m_force[i].data[3], m_force[i].data[4], m_force[i].data[5]);
-        hrp::Vector3 ee_moment = ((sensor->link->R * sensor->localPos + sensor->link->p) - (target->R * ikp.localCOPPos + target->p)).cross(sensor_force) + sensor_moment;
+        //hrp::Vector3 ee_moment = ((sensor->link->R * sensor->localPos + sensor->link->p) - (target->R * ikp.localCOPPos + target->p)).cross(sensor_force) + sensor_moment;
+        hrp::Vector3 ee_moment = ((sensor->link->R * sensor->localPos + sensor->link->p) - (target->R * ikp.localp + target->p)).cross(sensor_force) + sensor_moment;
         // <= Actual world frame
         if ( i == 0 ) f_diff += -1*sensor_force;
         else f_diff += sensor_force;
         fz[i] = sensor_force(2);
         // calcDampingControl
-        d_foot_rpy[i](0) = calcDampingControl(ref_foot_moment[i](0), ee_moment(0), d_foot_rpy[i](0), eefm_rot_damping_gain, eefm_rot_time_const);
-        d_foot_rpy[i](1) = calcDampingControl(ref_foot_moment[i](1), ee_moment(1), d_foot_rpy[i](1), eefm_rot_damping_gain, eefm_rot_time_const);
+        double tmp_damping_gain = (1-transition_smooth_gain) * eefm_rot_damping_gain * 10 + transition_smooth_gain * eefm_rot_damping_gain;
+        d_foot_rpy[i](0) = calcDampingControl(ref_foot_moment[i](0), ee_moment(0), d_foot_rpy[i](0), tmp_damping_gain, eefm_rot_time_const);
+        d_foot_rpy[i](1) = calcDampingControl(ref_foot_moment[i](1), ee_moment(1), d_foot_rpy[i](1), tmp_damping_gain, eefm_rot_time_const);
         d_foot_rpy[i](0) = vlimit(d_foot_rpy[i](0), deg2rad(-10.0), deg2rad(10.0));
         d_foot_rpy[i](1) = vlimit(d_foot_rpy[i](1), deg2rad(-10.0), deg2rad(10.0));
         // Actual ee frame =>
@@ -723,8 +777,9 @@ void Stabilizer::getActualParameters ()
       if ( (contact_states[contact_states_index_map["rleg"]] && contact_states[contact_states_index_map["lleg"]]) // Reference : double support phase
            || (isContact(0) && isContact(1)) ) { // Actual : double support phase
         for (size_t i = 0; i < 3; i++) {
+            double tmp_damping_gain = (1-transition_smooth_gain) * eefm_pos_damping_gain(i) * 10 + transition_smooth_gain * eefm_pos_damping_gain(i);
             pos_ctrl(i) = calcDampingControl (ref_f_diff(i), f_diff(i), pos_ctrl(i),
-                                              eefm_pos_damping_gain(i), eefm_pos_time_const_support);
+                                              tmp_damping_gain, eefm_pos_time_const_support);
         }
       } else {
         double remain_swing_time;
@@ -736,14 +791,16 @@ void Stabilizer::getActualParameters ()
         // std::cerr << "st " << remain_swing_time << " rleg " << contact_states[contact_states_index_map["rleg"]] << " lleg " << contact_states[contact_states_index_map["lleg"]] << std::endl;
         if (eefm_pos_transition_time+eefm_pos_margin_time<remain_swing_time) {
           for (size_t i = 0; i < 3; i++) {
+              double tmp_damping_gain = (1-transition_smooth_gain) * eefm_pos_damping_gain(i) * 10 + transition_smooth_gain * eefm_pos_damping_gain(i);
               pos_ctrl(i) = calcDampingControl (0, 0, pos_ctrl(i),
-                                                eefm_pos_damping_gain(i), eefm_pos_time_const_swing);
+                                                tmp_damping_gain, eefm_pos_time_const_swing);
           }
         } else {
           double tmp_ratio = std::min(1.0, 1.0 - (remain_swing_time-eefm_pos_margin_time)/eefm_pos_transition_time); // 0=>1
           for (size_t i = 0; i < 3; i++) {
+              double tmp_damping_gain = (1-transition_smooth_gain) * eefm_pos_damping_gain(i) * 10 + transition_smooth_gain * eefm_pos_damping_gain(i);
               pos_ctrl(i) = calcDampingControl (tmp_ratio * ref_f_diff(i), tmp_ratio * f_diff(i), pos_ctrl(i),
-                                                eefm_pos_damping_gain(i), ((1-tmp_ratio)*eefm_pos_time_const_swing+tmp_ratio*eefm_pos_time_const_support));
+                                                tmp_damping_gain, ((1-tmp_ratio)*eefm_pos_time_const_swing+tmp_ratio*eefm_pos_time_const_support));
           }
         }
       }
@@ -751,6 +808,9 @@ void Stabilizer::getActualParameters ()
       for (size_t i = 0; i < 3; i++) {
           pos_ctrl(i) = vlimit(pos_ctrl(i), -0.05, 0.05);
       }
+      // Convert pos_ctrl actual frame => foot origin frame
+      pos_ctrl = foot_origin_rot.transpose() * pos_ctrl;
+      // Divide pos_ctrl into rfoot and lfoot
       d_foot_pos[0] = -0.5 * pos_ctrl;
       d_foot_pos[1] = 0.5 * pos_ctrl;
       if (DEBUGP) {
@@ -799,7 +859,8 @@ void Stabilizer::getTargetParameters ()
   if ( transition_count == 0 ) {
     transition_smooth_gain = 1.0;
   } else {
-    transition_smooth_gain = 1/(1+exp(-9.19*(((MAX_TRANSITION_COUNT - std::fabs(transition_count)) / MAX_TRANSITION_COUNT) - 0.5)));
+    double max_transition_count = transition_time / dt;
+    transition_smooth_gain = 1/(1+exp(-9.19*(((max_transition_count - std::fabs(transition_count)) / max_transition_count) - 0.5)));
   }
   if (transition_count > 0) {
     for ( int i = 0; i < m_robot->numJoints(); i++ ){
@@ -824,7 +885,7 @@ void Stabilizer::getTargetParameters ()
   m_robot->rootLink()->R = target_root_R;
   m_robot->calcForwardKinematics();
   ref_zmp = m_robot->rootLink()->R * hrp::Vector3(m_zmpRef.data.x, m_zmpRef.data.y, m_zmpRef.data.z) + m_robot->rootLink()->p; // base frame -> world frame
-  if (st_algorithm == OpenHRP::StabilizerService::EEFM) {
+  if (st_algorithm == OpenHRP::StabilizerService::EEFM || st_algorithm == OpenHRP::StabilizerService::EEFMQP) {
     // apply inverse system
     hrp::Vector3 tmp_ref_zmp = ref_zmp + eefm_zmp_delay_time_const[0] * (ref_zmp - prev_ref_zmp) / dt;
     prev_ref_zmp = ref_zmp;
@@ -833,12 +894,13 @@ void Stabilizer::getTargetParameters ()
   ref_cog = m_robot->calcCM();
   for (size_t i = 0; i < stikp.size(); i++) {
     hrp::Link* target = m_robot->link(stikp[i].target_name);
-    target_ee_p[i] = target->p + target->R * stikp[i].localCOPPos;
+    //target_ee_p[i] = target->p + target->R * stikp[i].localCOPPos;
+    target_ee_p[i] = target->p + target->R * stikp[i].localp;
     target_ee_R[i] = target->R * stikp[i].localR;
   }
   // <= Reference world frame
 
-  if (st_algorithm == OpenHRP::StabilizerService::EEFM) {
+  if (st_algorithm == OpenHRP::StabilizerService::EEFM || st_algorithm == OpenHRP::StabilizerService::EEFMQP) {
     // Reference foot_origin frame =>
     hrp::Vector3 foot_origin_pos;
     hrp::Matrix33 foot_origin_rot;
@@ -858,7 +920,8 @@ void Stabilizer::getTargetParameters ()
     }
     prev_ref_foot_origin_rot = foot_origin_rot;
     for (size_t i = 0; i < stikp.size(); i++) {
-      target_ee_diff_p[i] += foot_origin_rot.transpose() * (target_ee_p[i] - foot_origin_pos);
+      //target_ee_diff_p[i] += foot_origin_rot.transpose() * (target_ee_p[i] - foot_origin_pos);
+      target_ee_diff_p[i] = foot_origin_rot.transpose() * (target_ee_p[i] - foot_origin_pos);
     }
     target_foot_origin_rot = foot_origin_rot;
     // <= Reference foot_origin frame
@@ -884,6 +947,19 @@ bool Stabilizer::calcZMP(hrp::Vector3& ret_zmp, const double zmp_z)
     tmpzmpx += nf(2) * fsp(0) - (fsp(2) - zmp_z) * nf(0) - nm(1);
     tmpzmpy += nf(2) * fsp(1) - (fsp(2) - zmp_z) * nf(1) + nm(0);
     tmpfz += nf(2);
+    // calc ee-local COP
+    hrp::Link* target = m_robot->link(stikp[i].target_name);
+    hrp::Matrix33 eeR = target->R * stikp[i].localR;
+    hrp::Vector3 ee_fsp = eeR.transpose() * (fsp - (target->p + target->R * stikp[i].localp)); // ee-local force sensor pos
+    nf = eeR.transpose() * nf;
+    nm = eeR.transpose() * nm;
+    // ee-local total moment and total force at ee position
+    double tmpcopmy = nf(2) * ee_fsp(0) - nf(0) * ee_fsp(2) - nm(1);
+    double tmpcopmx = nf(2) * ee_fsp(1) - nf(1) * ee_fsp(2) + nm(0);
+    double tmpcopfz = nf(2);
+    m_COPInfo.data[i*3] = tmpcopmx;
+    m_COPInfo.data[i*3+1] = tmpcopmy;
+    m_COPInfo.data[i*3+2] = tmpcopfz;
     prev_act_force_z[i] = 0.85 * prev_act_force_z[i] + 0.15 * nf(2); // filter, cut off 5[Hz]
   }
   tmpfz2 = prev_act_force_z[0] + prev_act_force_z[1];
@@ -893,6 +969,70 @@ bool Stabilizer::calcZMP(hrp::Vector3& ret_zmp, const double zmp_z)
   } else {
     ret_zmp = hrp::Vector3(tmpzmpx / tmpfz, tmpzmpy / tmpfz, zmp_z);
     return true; // on ground
+  }
+};
+
+void Stabilizer::calcStateForEmergencySignal()
+{
+  // COP Check
+  bool is_cop_outside = false;
+  if (DEBUGP) {
+      std::cerr << "[" << m_profile.instance_name << "] Check Emergency State (seq = " << (is_seq_interpolating?"interpolating":"empty") << ")" << std::endl;
+  }
+  if (on_ground && transition_count == 0 && control_mode == MODE_ST) {
+    if (DEBUGP) {
+        std::cerr << "[" << m_profile.instance_name << "] COP check" << std::endl;
+    }
+    for (size_t i = 0; i < stikp.size(); i++) {
+      if (stikp[i].ee_name.find("leg") == std::string::npos) continue;
+      // check COP inside
+      if (m_COPInfo.data[i*3+2] > 20.0 ) {
+        hrp::Vector3 tmpcop(m_COPInfo.data[i*3+1]/m_COPInfo.data[i*3+2], m_COPInfo.data[i*3]/m_COPInfo.data[i*3+2], 0);
+        is_cop_outside = is_cop_outside ||
+            (!szd->is_inside_foot(tmpcop, stikp[i].ee_name=="lleg", cop_check_margin) ||
+             szd->is_front_of_foot(tmpcop, cop_check_margin) ||
+             szd->is_rear_of_foot(tmpcop, cop_check_margin));
+        if (DEBUGP) {
+            std::cerr << "[" << m_profile.instance_name << "]   [" << stikp[i].ee_name << "] "
+                      << "outside(" << !szd->is_inside_foot(tmpcop, stikp[i].ee_name=="lleg", cop_check_margin) << ") "
+                      << "front(" << szd->is_front_of_foot(tmpcop, cop_check_margin) << ") "
+                      << "rear(" << szd->is_rear_of_foot(tmpcop, cop_check_margin) << ")" << std::endl;
+        }
+      } else {
+        is_cop_outside = true;
+      }
+    }
+  } else {
+    is_cop_outside = false;
+  }
+  // CP Check
+  bool is_cp_outside = false;
+  if (on_ground && transition_count == 0 && control_mode == MODE_ST) {
+    hrp::Vector3 ref_cp = ref_cog + ref_cogvel/std::sqrt(eefm_gravitational_acceleration/ ref_cog(2));
+    hrp::Vector3 act_cp = act_cog + act_cogvel/std::sqrt(eefm_gravitational_acceleration/ act_cog(2));
+    hrp::Vector3 diff_cp = ref_cp - act_cp;
+    diff_cp(2) = 0.0;
+    if (DEBUGP) {
+        std::cerr << "[" << m_profile.instance_name << "] CP value " << diff_cp.norm() << std::endl;
+    }
+    // check CP inside
+    if (diff_cp.norm() > cp_check_margin) {
+      is_cp_outside = true;
+      std::cerr << "[" << m_profile.instance_name << "] CP too large error " << diff_cp.norm() << std::endl;
+    }
+  }
+  // Total check for emergency signal
+  if (OpenHRP::StabilizerService::NO_CHECK) {
+      is_emergency = false;
+  } else if (OpenHRP::StabilizerService::COP) {
+    is_emergency = is_cop_outside && is_seq_interpolating;
+  } else {
+    is_emergency = is_cp_outside;
+  }
+  if (DEBUGP) {
+      std::cerr << "[" << m_profile.instance_name << "] EmergencyCheck ("
+                << (emergency_check_mode == OpenHRP::StabilizerService::NO_CHECK?"NO_CHECK": (emergency_check_mode == OpenHRP::StabilizerService::COP?"COP":"CP") )
+                << ") " << (is_emergency?"emergency":"non-emergency") << std::endl;
   }
 };
 
@@ -997,6 +1137,13 @@ void Stabilizer::calcEEForceMomentControl() {
       current_base_rpy = hrp::rpyFromRot(m_robot->rootLink()->R);
       current_base_pos = m_robot->rootLink()->p;
 
+      // Convert d_foot_pos in foot origin frame => "current" world frame
+      hrp::Vector3 foot_origin_pos;
+      hrp::Matrix33 foot_origin_rot;
+      calcFootOriginCoords (foot_origin_pos, foot_origin_rot);
+      for (size_t i = 0; i < 2; i++)
+          d_foot_pos[i] = foot_origin_rot * d_foot_pos[i];
+
       // Feet and hands modification
       hrp::Vector3 target_link_p[stikp.size()];
       hrp::Matrix33 target_link_R[stikp.size()];
@@ -1017,12 +1164,16 @@ void Stabilizer::calcEEForceMomentControl() {
 //               target_link_p[i] = target_ee_p[i];
 //               target_link_R[i] = target_ee_R[i];
             target_ee_diff_p[i] *= transition_smooth_gain;
-            tmpp = target_ee_p[i] + 0.0 * target_foot_origin_rot * target_ee_diff_p[i]; // tempolarily disabled
+            double const_param = 2 * M_PI * eefm_ee_error_cutoff_freq * dt;
+            target_ee_diff_p[i] = 1.0/(1+const_param) * prev_target_ee_diff_p[i] + const_param/(1+const_param) * target_ee_diff_p[i];
+            tmpp = target_ee_p[i] + eefm_ee_pos_error_p_gain * target_foot_origin_rot * target_ee_diff_p[i]; // tempolarily disabled
+            prev_target_ee_diff_p[i] = target_ee_diff_p[i];
             tmpR = target_ee_R[i];
           }
           // target at ee => target at link-origin
           rats::rotm3times(target_link_R[i], tmpR, stikp[i].localR.transpose());
-          target_link_p[i] = tmpp - target_link_R[i] * stikp[i].localCOPPos;
+          //target_link_p[i] = tmpp - target_link_R[i] * stikp[i].localCOPPos;
+          target_link_p[i] = tmpp - target_link_R[i] * stikp[i].localp;
       }
       // solveIK
       //   IK target is link origin pos and rot, not ee pos and rot.
@@ -1096,9 +1247,12 @@ void Stabilizer::sync_2_st ()
   ee_d_foot_rpy[0] = ee_d_foot_rpy[1] = hrp::Vector3::Zero();
   for (size_t i = 0; i < stikp.size(); i++) {
     target_ee_diff_p[i] = hrp::Vector3::Zero();
+    prev_target_ee_diff_p[i] = hrp::Vector3::Zero();
+    target_ee_diff_r[i] = hrp::Vector3::Zero();
+    prev_target_ee_diff_r[i] = hrp::Vector3::Zero();
   }
   if (on_ground) {
-    transition_count = -MAX_TRANSITION_COUNT;
+    transition_count = -1 * transition_time / dt;
     control_mode = MODE_ST;
   } else {
     transition_count = 0;
@@ -1109,7 +1263,7 @@ void Stabilizer::sync_2_st ()
 void Stabilizer::sync_2_idle ()
 {
   std::cerr << "[" << m_profile.instance_name << "] " << "Sync ST => IDLE"  << std::endl;
-  transition_count = MAX_TRANSITION_COUNT;
+  transition_count = transition_time / dt;
   for (int i = 0; i < m_robot->numJoints(); i++ ) {
     transition_joint_q[i] = m_robot->joint(i)->q;
   }
@@ -1171,12 +1325,31 @@ void Stabilizer::getParameter(OpenHRP::StabilizerService::stParam& i_stp)
   i_stp.eefm_pos_transition_time = eefm_pos_transition_time;
   i_stp.eefm_pos_margin_time = eefm_pos_margin_time;
   i_stp.eefm_leg_inside_margin = szd->get_leg_inside_margin();
+  i_stp.eefm_leg_outside_margin = szd->get_leg_outside_margin();
   i_stp.eefm_leg_front_margin = szd->get_leg_front_margin();
   i_stp.eefm_leg_rear_margin = szd->get_leg_rear_margin();
   i_stp.eefm_cogvel_cutoff_freq = eefm_cogvel_cutoff_freq;
   i_stp.eefm_wrench_alpha_blending = szd->get_wrench_alpha_blending();
+  i_stp.eefm_alpha_cutoff_freq = szd->get_alpha_cutoff_freq();
   i_stp.eefm_gravitational_acceleration = eefm_gravitational_acceleration;
+  i_stp.eefm_ee_pos_error_p_gain = eefm_ee_pos_error_p_gain;
+  i_stp.eefm_ee_rot_error_p_gain = eefm_ee_rot_error_p_gain;
+  i_stp.eefm_ee_error_cutoff_freq = eefm_ee_error_cutoff_freq;
+  i_stp.is_ik_enable.length(is_ik_enable.size());
+  for (size_t i = 0; i < is_ik_enable.size(); i++) {
+      i_stp.is_ik_enable[i] = is_ik_enable[i];
+  }
+  i_stp.foot_origin_offset.length(2);
+  for (size_t i = 0; i < i_stp.foot_origin_offset.length(); i++) {
+      i_stp.foot_origin_offset[i].length(3);
+      i_stp.foot_origin_offset[i][0] = foot_origin_offset[i](0);
+      i_stp.foot_origin_offset[i][1] = foot_origin_offset[i](1);
+      i_stp.foot_origin_offset[i][2] = foot_origin_offset[i](2);
+  }
   i_stp.st_algorithm = st_algorithm;
+  i_stp.transition_time = transition_time;
+  i_stp.cop_check_margin = cop_check_margin;
+  i_stp.cp_check_margin = cp_check_margin;
   switch(control_mode) {
   case MODE_IDLE: i_stp.controller_mode = OpenHRP::StabilizerService::MODE_IDLE; break;
   case MODE_AIR: i_stp.controller_mode = OpenHRP::StabilizerService::MODE_AIR; break;
@@ -1185,6 +1358,7 @@ void Stabilizer::getParameter(OpenHRP::StabilizerService::stParam& i_stp)
   case MODE_SYNC_TO_AIR: i_stp.controller_mode = OpenHRP::StabilizerService::MODE_SYNC_TO_AIR; break;
   default: break;
   }
+  i_stp.emergency_check_mode = emergency_check_mode;
 };
 
 void Stabilizer::setParameter(const OpenHRP::StabilizerService::stParam& i_stp)
@@ -1237,12 +1411,50 @@ void Stabilizer::setParameter(const OpenHRP::StabilizerService::stParam& i_stp)
   eefm_pos_transition_time = i_stp.eefm_pos_transition_time;
   eefm_pos_margin_time = i_stp.eefm_pos_margin_time;
   szd->set_leg_inside_margin(i_stp.eefm_leg_inside_margin);
+  szd->set_leg_outside_margin(i_stp.eefm_leg_outside_margin);
   szd->set_leg_front_margin(i_stp.eefm_leg_front_margin);
   szd->set_leg_rear_margin(i_stp.eefm_leg_rear_margin);
   szd->set_vertices_from_margin_params();
   eefm_cogvel_cutoff_freq = i_stp.eefm_cogvel_cutoff_freq;
   szd->set_wrench_alpha_blending(i_stp.eefm_wrench_alpha_blending);
+  szd->set_alpha_cutoff_freq(i_stp.eefm_alpha_cutoff_freq);
   eefm_gravitational_acceleration = i_stp.eefm_gravitational_acceleration;
+  eefm_ee_pos_error_p_gain = i_stp.eefm_ee_pos_error_p_gain;
+  eefm_ee_rot_error_p_gain = i_stp.eefm_ee_rot_error_p_gain;
+  eefm_ee_error_cutoff_freq = i_stp.eefm_ee_error_cutoff_freq;
+  if (is_ik_enable.size() != i_stp.is_ik_enable.length()) {
+      std::cerr << "[" << m_profile.instance_name << "]   is_ik_enable cannot be set. Length " << is_ik_enable.size() << " != " << i_stp.is_ik_enable.length() << std::endl;
+  } else if (control_mode != MODE_IDLE) {
+      std::cerr << "[" << m_profile.instance_name << "]   is_ik_enable cannot be set. Current control_mode is " << control_mode << std::endl;
+  } else {
+      for (size_t i = 0; i < is_ik_enable.size(); i++) {
+          is_ik_enable[i] = i_stp.is_ik_enable[i];
+      }
+  }
+  transition_time = i_stp.transition_time;
+  cop_check_margin = i_stp.cop_check_margin;
+  cp_check_margin = i_stp.cp_check_margin;
+  if (i_stp.foot_origin_offset.length () != 2) {
+      std::cerr << "[" << m_profile.instance_name << "]   foot_origin_offset cannot be set. Length " << i_stp.foot_origin_offset.length() << " != " << 2 << std::endl;
+  } else if (control_mode != MODE_IDLE) {
+      std::cerr << "[" << m_profile.instance_name << "]   foot_origin_offset cannot be set. Current control_mode is " << control_mode << std::endl;
+  } else {
+      for (size_t i = 0; i < i_stp.foot_origin_offset.length(); i++) {
+          foot_origin_offset[i](0) = i_stp.foot_origin_offset[i][0];
+          foot_origin_offset[i](1) = i_stp.foot_origin_offset[i][1];
+          foot_origin_offset[i](2) = i_stp.foot_origin_offset[i][2];
+      }
+  }
+  std::cerr << "[" << m_profile.instance_name << "]   is_ik_enable is ";
+  for (size_t i = 0; i < is_ik_enable.size(); i++) {
+      std::cerr <<"[" << is_ik_enable[i] << "]";
+  }
+  std::cerr << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "]   foot_origin_offset is ";
+  for (size_t i = 0; i < 2; i++) {
+      std::cerr << foot_origin_offset[i].format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "    [", "]"));
+  }
+  std::cerr << "[m]" << std::endl;
   std::cerr << "[" << m_profile.instance_name << "]   eefm_k1  = [" << eefm_k1[0] << ", " << eefm_k1[1] << "]" << std::endl;
   std::cerr << "[" << m_profile.instance_name << "]   eefm_k2  = [" << eefm_k2[0] << ", " << eefm_k2[1] << "]" << std::endl;
   std::cerr << "[" << m_profile.instance_name << "]   eefm_k3  = [" << eefm_k3[0] << ", " << eefm_k3[1] << "]" << std::endl;
@@ -1258,13 +1470,20 @@ void Stabilizer::setParameter(const OpenHRP::StabilizerService::stParam& i_stp)
   szd->print_params(std::string(m_profile.instance_name));
   szd->print_vertices(std::string(m_profile.instance_name));
   std::cerr << "[" << m_profile.instance_name << "]   eefm_gravitational_acceleration = " << eefm_gravitational_acceleration << "[m/s^2]" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "]   eefm_ee_pos_error_p_gain = " << eefm_ee_pos_error_p_gain << ", eefm_ee_rot_error_p_gain = " << eefm_ee_rot_error_p_gain << ", eefm_ee_error_cutoff_freq = " << eefm_ee_error_cutoff_freq << "[Hz]" << std::endl;
   std::cerr << "[" << m_profile.instance_name << "]  COMMON" << std::endl;
   if (control_mode == MODE_IDLE) {
     st_algorithm = i_stp.st_algorithm;
-    std::cerr << "[" << m_profile.instance_name << "]   st_algorithm changed to [" << (st_algorithm == OpenHRP::StabilizerService::EEFM?"EEFM":"TPCC") << "]" << std::endl;
+    emergency_check_mode = i_stp.emergency_check_mode;
+    std::cerr << "[" << m_profile.instance_name << "]   st_algorithm changed to [" << (st_algorithm == OpenHRP::StabilizerService::EEFM?"EEFM":(st_algorithm == OpenHRP::StabilizerService::EEFMQP?"EEFMQP":"TPCC")) << "]" << std::endl;
+    std::cerr << "[" << m_profile.instance_name << "]   emergency_check_mode changed to [" << (emergency_check_mode == OpenHRP::StabilizerService::NO_CHECK?"NO_CHECK": (emergency_check_mode == OpenHRP::StabilizerService::COP?"COP":"CP") ) << "]" << std::endl;
   } else {
-    std::cerr << "[" << m_profile.instance_name << "]   st_algorithm cannot be changed to [" << (st_algorithm == OpenHRP::StabilizerService::EEFM?"EEFM":"TPCC") << "] during MODE_AIR or MODE_ST." << std::endl;
+    std::cerr << "[" << m_profile.instance_name << "]   st_algorithm cannot be changed to [" << (st_algorithm == OpenHRP::StabilizerService::EEFM?"EEFM":(st_algorithm == OpenHRP::StabilizerService::EEFMQP?"EEFMQP":"TPCC")) << "] during MODE_AIR or MODE_ST." << std::endl;
+    std::cerr << "[" << m_profile.instance_name << "]   emergency_check_mode cannot be changed to [" << (emergency_check_mode == OpenHRP::StabilizerService::NO_CHECK?"NO_CHECK": (emergency_check_mode == OpenHRP::StabilizerService::COP?"COP":"CP") ) << "] during MODE_AIR or MODE_ST." << std::endl;
   }
+  std::cerr << "[" << m_profile.instance_name << "]  transition_time = " << transition_time << "[s]" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "]  cop_check_margin = " << cop_check_margin << "[m]" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "]  cp_check_margin = " << cp_check_margin << "[m]" << std::endl;
 }
 
 void Stabilizer::waitSTTransition()
