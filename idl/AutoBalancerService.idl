@@ -35,6 +35,12 @@ module OpenHRP
     {
       /// Step height [m]
       double step_height;
+      /// Step time [s]
+      double step_time;
+      /// Maximum toe angle [deg] for toe-off motion
+      double toe_angle;
+      /// Maximum heel angle [deg] for heel-contact motion
+      double heel_angle;
     };
 
     /**
@@ -62,7 +68,9 @@ module OpenHRP
       SHUFFLING,
       CYCLOID,
       RECTANGLE,
-      STAIR
+      STAIR,
+      CYCLOIDDELAY,
+      CYCLOIDDELAYKICK
     };
 
     /**
@@ -116,14 +124,20 @@ module OpenHRP
       double default_step_height;
       /// Ratio of double support period. Ratio is included in (0, 1). Double support period time is default_double_support_ratio*default_step_time.
       double default_double_support_ratio;
+      /// Ratio of double support static period in which reference ZMP does not move. Ratio is included in (0, 1). default_double_support_ratio >= default_double_support_static_ratio..
+      double default_double_support_static_ratio;
       /// Stride limitation of forward x[m], y[m], theta[deg], and backward x[m] for goPos
       sequence<double, 4> stride_parameter;
       /// Default OrbitType
       OrbitType default_orbit_type;
       /// Time offset [s] for swing trajectory by delay_hoffarbib_trajectory_generator.
       double swing_trajectory_delay_time_offset;
+      /// Weight parameter for distance of final path of delay_hoffarbib_trajectory_generator (1.0 by default).
+      double swing_trajectory_final_distance_weight;
       /// Way point offset 3D vector [m] for stair_delay_hoffarbib_trajectory_generator.
       DblArray3 stair_trajectory_way_point_offset;
+      /// Kick point offset 3D vector [m] for cycloid_delay_kick_hoffarbib_trajectory_generator.
+      DblArray3 cycloid_delay_kick_point_offset;
       /// Gravitational acceleration [m/s^2]
       double gravitational_acceleration;
       /// Toe position offset [m] in end-effector frame x axis
@@ -144,6 +158,10 @@ module OpenHRP
       boolean use_toe_joint;
       /// Use toe heel zmp transition. If true, zmp moves among default position, toe position (described by toe_zmp_offset_x), and heel position (described by heel_zmp_offset_x).
       boolean use_toe_heel_transition;
+      /// Foot position offset[m] (rleg and lleg)
+      sequence<DblSequence3> leg_default_translate_pos;
+      /// Number of optional finalize footsteps in goPos
+      long optional_go_pos_finalize_footstep_num;
     };
 
     /**
@@ -161,6 +179,12 @@ module OpenHRP
       DblArray3 graspless_manip_p_gain;
       DblArray3 graspless_manip_reference_trans_pos;
       DblArray4 graspless_manip_reference_trans_rot;
+      /// Transition time [s] for start and stop AutoBalancer
+      double transition_time;
+      /// Transition time [s] for default_zmp_offsets
+      double zmp_transition_time;
+      /// Transition time [s] for adjust foot step
+      double adjust_footstep_transition_time;
     };
 
     /**
@@ -185,6 +209,13 @@ module OpenHRP
     boolean goStop();
 
     /**
+     * @brief Stop stepping immediately.
+     * @param
+     * @return true if set successfully, false otherwise
+     */
+    boolean emergencyStop();
+
+    /**
      * @brief Set footsteps. Returns without waiting for whole steps to be executed.
      * @param fs is sequence of FootStep structure.
      * @return true if set successfully, false otherwise
@@ -204,6 +235,13 @@ module OpenHRP
      * @return true if set successfully, false otherwise
      */
     void waitFootSteps();
+
+    /**
+     * @brief Wait for whole footsteps are executed.
+     * @param tm is early time from stepping finish
+     * @return true if set successfully, false otherwise
+     */
+    void waitFootStepsEarly(in double tm);
 
     /**
      * @brief Start AutoBalancer mode in which the robot controls the COM.
@@ -253,5 +291,26 @@ module OpenHRP
      * @return true if set successfully, false otherwise
      */
     boolean getFootstepParam(out FootstepParam i_param);
+
+    /**
+     * @brief Adjust Footsteps.
+     * @param 
+     * @return true if set successfully, false otherwise
+     */
+    boolean adjustFootSteps(in Footstep rfootstep, in Footstep lfootstep);
+
+    /**
+     * @brief Get remaining footstep list.
+     * @param o_footstep is remaining footstep sequence. For example, if initial footsteps are [rfoot(1), lfoot(2), ..., rfoot(N)] (rfoot(1) is initial support foot and lfoot(2) is initial swing destination foot) and current support foot is lfoot(X), o_footstep is [lfoot(X), rfoot(X+1), ..., rfootN].
+     * @return true if set successfully, false otherwise
+     */
+    boolean getRemainingFootstepSequence(out FootstepSequence o_footstep);
+
+    /**
+     * @brief Release emergency stop mode.
+     * @param
+     * @return true if set successfully, false otherwise
+     */
+    boolean releaseEmergencyStop();
   };
 };

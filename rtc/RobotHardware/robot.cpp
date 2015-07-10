@@ -19,7 +19,7 @@
 using namespace hrp;
 
 
-robot::robot() : m_fzLimitRatio(0), m_maxZmpError(DEFAULT_MAX_ZMP_ERROR), m_calibRequested(false), m_pdgainsFilename("PDgains.sav"), wait_sem(0), m_reportedEmergency(true)
+robot::robot(double dt) : m_fzLimitRatio(0), m_maxZmpError(DEFAULT_MAX_ZMP_ERROR), m_calibRequested(false), m_pdgainsFilename("PDgains.sav"), wait_sem(0), m_reportedEmergency(true), m_dt(dt), m_accLimit(0)
 {
     m_rLegForceSensorId = m_lLegForceSensorId = -1;
 }
@@ -83,6 +83,7 @@ bool robot::init()
       std::cerr << "  accelerometer:" << numSensors(Sensor::ACCELERATION) << "(VRML), " << number_of_accelerometers() << "(IOB)"  << std::endl;
       return false;
     }
+    G << 0, 0, 9.8;
 
     if (open_iob() == FALSE) return false;
 
@@ -209,10 +210,11 @@ void robot::calibrateInertiaSensorOneStep()
             }
 
             for (int j=0; j<numSensors(Sensor::ACCELERATION); j++) {
+                hrp::Sensor* m_sensor = sensor(hrp::Sensor::ACCELERATION, j);
+                hrp::Matrix33 m_sensorR = m_sensor->link->R * m_sensor->localR;
+                hrp::Vector3 G_rotated = m_sensorR.transpose() * G;
                 for (int i=0; i<3; i++) {
-                    accel_sum[j][i] = -accel_sum[j][i]/CALIB_COUNT;
-#define	G	(9.8) // [m/s^2]
-                    if (i==2) accel_sum[j][i] += G;
+                    accel_sum[j][i] = -accel_sum[j][i]/CALIB_COUNT + G_rotated(i);
                 }
                 write_accelerometer_offset(j, accel_sum[j].data());
             }
@@ -441,6 +443,14 @@ void robot::readForceSensor(unsigned int i_rank, double *o_forces)
 
 void robot::writeJointCommands(const double *i_commands)
 {
+    if (!m_commandOld.size()) {
+        m_commandOld.resize(numJoints());
+        m_velocityOld.resize(numJoints());
+    }
+    for (int i=0; i<numJoints(); i++){
+        m_velocityOld[i] = (i_commands[i] - m_commandOld[i])/m_dt;
+        m_commandOld[i] = i_commands[i];
+    }
     write_command_angles(i_commands);
 }
 
@@ -511,18 +521,32 @@ char *time_string()
 
 bool robot::checkJointCommands(const double *i_commands)
 {
+    if (!m_dt) return false;
+    if (!m_commandOld.size()) return false;
+
     int state;
     for (int i=0; i<numJoints(); i++){
         read_servo_state(i, &state);
-        if (state == ON && m_servoErrorLimit[i] != 0){
-            double angle, command=i_commands[i];
-            read_actual_angle(i, &angle);
-            if (fabs(angle-command) > m_servoErrorLimit[i]){
+        if (state == ON){
+            double command_old=m_commandOld[i], command=i_commands[i];
+            double v = (command - command_old)/m_dt;
+            if (fabs(v) > joint(i)->uvlimit){
                 std::cerr << time_string()
-                          << ": servo error limit over: joint = " 
+                          << ": joint command velocity limit over: joint = " 
 		          << joint(i)->name
-		          << ", qRef = " << command/M_PI*180 << "[deg], q = " 
-		          << angle/M_PI*180 << "[deg]" << std::endl;
+		          << ", vlimit = " << joint(i)->uvlimit/M_PI*180 
+                          << "[deg/s], v = " 
+		          << v/M_PI*180 << "[deg/s]" << std::endl;
+                return true;
+            }
+            double a = (v - m_velocityOld[i])/m_dt;
+            if (m_accLimit && fabs(a) > m_accLimit){
+                std::cerr << time_string()
+                          << ": joint command acceleration limit over: joint = " 
+		          << joint(i)->name
+		          << ", alimit = " << m_accLimit/M_PI*180 
+                          << "[deg/s^2], v = " 
+		          << a/M_PI*180 << "[deg/s^2]" << std::endl;
                 return true;
             }
         }
@@ -555,7 +579,7 @@ bool robot::checkEmergency(emg_reason &o_reason, int &o_id)
     if (m_rLegForceSensorId >= 0){
         double force[6];
         read_force_sensor(m_rLegForceSensorId, force);
-        if (force[FZ] > totalMass()*G*m_fzLimitRatio){
+        if (force[FZ] > totalMass()*G(2)*m_fzLimitRatio){
 	    std::cerr << time_string() << ": right Fz limit over: Fz = " << force[FZ] << std::endl;
             o_reason = EMG_FZ;
             o_id = m_rLegForceSensorId;
@@ -565,7 +589,7 @@ bool robot::checkEmergency(emg_reason &o_reason, int &o_id)
     if (m_lLegForceSensorId >= 0){
         double force[6];
         read_force_sensor(m_lLegForceSensorId, force);
-        if (force[FZ] > totalMass()*G*m_fzLimitRatio){
+        if (force[FZ] > totalMass()*G(2)*m_fzLimitRatio){
 	    std::cerr << time_string() << ": left Fz limit over: Fz = " << force[FZ] << std::endl;
             o_reason = EMG_FZ;
             o_id = m_lLegForceSensorId;
@@ -762,4 +786,3 @@ int robot::numThermometers()
     return 0;
 #endif
 }
-
