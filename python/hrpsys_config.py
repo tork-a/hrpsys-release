@@ -7,6 +7,7 @@ from rtm import *
 from OpenHRP import *
 from hrpsys import *  # load ModelLoader
 from hrpsys import ImpedanceControllerService_idl
+from waitInput import waitInputConfirm
 
 import socket
 import time
@@ -200,6 +201,16 @@ class HrpsysConfigurator:
     abc_version = None
     st_version = None
 
+    # EmergencyStopper
+    es = None
+    es_svc = None
+    es_version = None
+
+    # EmergencyStopper (HardEmergencyStopper)
+    hes = None
+    hes_svc = None
+    hes_version = None
+
     # CollisionDetector
     co = None
     co_svc = None
@@ -256,6 +267,9 @@ class HrpsysConfigurator:
 
     hrpsys_version = None
 
+    # flag isKinamticsOnlyMode?
+    kinematics_only_mode = False
+
     # public method
     def connectComps(self):
         '''!@brief
@@ -291,6 +305,7 @@ class HrpsysConfigurator:
 
         # only for kinematics simulator
         if rtm.findPort(self.rh.ref, "basePoseRef"):
+            self.kinematics_only_mode = True
             if self.abc:
                 connectPorts(self.abc.port("basePoseOut"), self.rh.port("basePoseRef"))
             else:
@@ -346,8 +361,12 @@ class HrpsysConfigurator:
         # connection for st
         if rtm.findPort(self.rh.ref, "lfsensor") and rtm.findPort(
                                      self.rh.ref, "rfsensor") and self.st:
-            connectPorts(self.rh.port("lfsensor"), self.st.port("forceL"))
-            connectPorts(self.rh.port("rfsensor"), self.st.port("forceR"))
+            if self.rmfo:
+                connectPorts(self.rmfo.port("off_lfsensor"), self.st.port("forceL"))
+                connectPorts(self.rmfo.port("off_rfsensor"), self.st.port("forceR"))
+            else:
+                connectPorts(self.rh.port("lfsensor"), self.st.port("forceL"))
+                connectPorts(self.rh.port("rfsensor"), self.st.port("forceR"))
             connectPorts(self.kf.port("rpy"), self.st.port("rpy"))
             connectPorts(self.sh.port("zmpOut"), self.abc.port("zmpIn"))
             connectPorts(self.sh.port("basePosOut"), self.abc.port("basePosIn"))
@@ -360,6 +379,10 @@ class HrpsysConfigurator:
             connectPorts(self.abc.port("contactStates"), self.st.port("contactStates"))
             connectPorts(self.abc.port("controlSwingSupportTime"), self.st.port("controlSwingSupportTime"))
             connectPorts(self.rh.port("q"), self.st.port("qCurrent"))
+            connectPorts(self.seq.port("qRef"), self.st.port("qRefSeq"))
+            if self.es:
+                connectPorts(self.st.port("emergencySignal"), self.es.port("emergencySignal"))
+            connectPorts(self.st.port("emergencySignal"), self.abc.port("emergencySignal"))
 
         # ref force moment connection
         for sen in self.getForceSensorNames():
@@ -633,6 +656,7 @@ class HrpsysConfigurator:
             ['kf', "KalmanFilter"],
             ['vs', "VirtualForceSensor"],
             ['rmfo', "RemoveForceSensorLinkOffset"],
+            ['es', "EmergencyStopper"],
             ['ic', "ImpedanceController"],
             ['abc', "AutoBalancer"],
             ['st', "Stabilizer"],
@@ -640,6 +664,7 @@ class HrpsysConfigurator:
             ['tc', "TorqueController"],
             # ['te', "ThermoEstimator"],
             # ['tl', "ThermoLimiter"],
+            ['hes', "EmergencyStopper"],
             ['el', "SoftErrorLimiter"],
             ['log', "DataLogger"]
             ]
@@ -648,8 +673,8 @@ class HrpsysConfigurator:
         '''!@brief
         Get list of controller list that need to control joint angles
         '''
-        controller_list = [self.ic, self.gc, self.abc, self.st, self.co,
-                           self.tc, self.el]
+        controller_list = [self.es, self.ic, self.gc, self.abc, self.st, self.co,
+                           self.tc, self.hes, self.el]
         return filter(lambda c: c != None, controller_list)  # only return existing controllers
 
     def getRTCInstanceList(self, verbose=True):
@@ -755,14 +780,14 @@ class HrpsysConfigurator:
         #
         if self.kf != None:
             self.connectLoggerPort(self.kf, 'rpy')
-        if self.seq != None:
-            self.connectLoggerPort(self.seq, 'qRef')
         if self.sh != None:
             self.connectLoggerPort(self.sh, 'qOut')
             self.connectLoggerPort(self.sh, 'tqOut')
             self.connectLoggerPort(self.sh, 'basePosOut')
             self.connectLoggerPort(self.sh, 'baseRpyOut')
             self.connectLoggerPort(self.sh, 'zmpOut')
+        if self.ic != None:
+            self.connectLoggerPort(self.ic, 'q')
         if self.abc != None:
             self.connectLoggerPort(self.abc, 'zmpOut')
             self.connectLoggerPort(self.abc, 'baseTformOut')
@@ -795,7 +820,6 @@ class HrpsysConfigurator:
             if self.simulation_mode:
                 self.connectLoggerPort(self.rh, 'WAIST')
         for sen in filter(lambda x: x.type == "Force", self.sensors):
-            self.connectLoggerPort(self.seq, sen.name + "Ref")
             self.connectLoggerPort(self.sh, sen.name + "Out")
         if self.rmfo != None:
             for sen in filter(lambda x: x.type == "Force", self.sensors):
@@ -980,6 +1004,45 @@ class HrpsysConfigurator:
         if wait:
             self.waitInterpolationOfGroup(gname)
         return ret
+
+    def setJointAnglesSequence(self, angless, tms):
+        '''!@brief
+        Set all joint angles.
+        \verbatim
+        NOTE-1: that while this method does not check angle value range,
+                any joints could emit position limit over error, which has not yet
+                been thrown by hrpsys so that there's no way to catch on this client
+                side. Worthwhile opening an enhancement ticket for that at
+                hironx' designated issue tracker.
+
+        \endverbatim
+        @param sequence angles list of float: In degree.
+        @param tm sequence of float: Time to complete, In Second
+        '''
+        for angles in angless:
+            for i in range(len(angles)):
+                angles[i] = angles[i] / 180.0 * math.pi
+        return self.seq_svc.setJointAnglesSequence(angless, tms)
+
+    def setJointAnglesSequenceOfGroup(self, gname, angless, tms):
+        '''!@brief
+        Set all joint angles.
+        \verbatim
+        NOTE-1: that while this method does not check angle value range,
+                any joints could emit position limit over error, which has not yet
+                been thrown by hrpsys so that there's no way to catch on this client
+                side. Worthwhile opening an enhancement ticket for that at
+                hironx' designated issue tracker.
+
+        \endverbatim
+        @param gname str: Name of the joint group.
+        @param sequence angles list of float: In degree.
+        @param tm sequence of float: Time to complete, In Second
+        '''
+        for angles in angless:
+            for i in range(len(angles)):
+                angles[i] = angles[i] / 180.0 * math.pi
+        return self.seq_svc.setJointAnglesSequenceOfGroup(gname, angless, tms)
 
     def loadPattern(self, fname, tm):
         '''!@brief
@@ -1916,6 +1979,30 @@ dr=0, dp=0, dw=0, tm=10, wait=True):
             print(self.configurator_name + '\033[31mstopImpedance: Try to connect unsupported RTC' + str(self.hrpsys_version) + '\033[0m')
         else:
             self.stopImpedance_315_4(arm)
+
+    def startDefaultUnstableControllers (self, ic_limbs=["rarm", "larm"], abc_limbs=["rleg", "lleg"]):
+        '''!@brief
+        Start default unstable RTCs controller mode.
+        Currently Stabilzier, AutoBalancer, and ImpedanceController are started.
+        '''
+        self.startStabilizer()
+        for limb in ic_limbs:
+            self.ic_svc.startImpedanceControllerNoWait(limb)
+        self.startAutoBalancer(abc_limbs)
+        for limb in ic_limbs:
+            self.ic_svc.waitImpedanceControllerTransition(limb)
+
+    def stopDefaultUnstableControllers (self, ic_limbs=["rarm", "larm"]):
+        '''!@brief
+        Stop default unstable RTCs controller mode.
+        Currently Stabilzier, AutoBalancer, and ImpedanceController are stopped.
+        '''
+        self.stopStabilizer()
+        for limb in ic_limbs:
+            self.ic_svc.stopImpedanceControllerNoWait(limb)
+        self.stopAutoBalancer()
+        for limb in ic_limbs:
+            self.ic_svc.waitImpedanceControllerTransition(limb)
 
     # ##
     # ## initialize

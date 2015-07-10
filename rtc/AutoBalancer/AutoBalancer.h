@@ -92,9 +92,11 @@ class AutoBalancer
   bool goPos(const double& x, const double& y, const double& th);
   bool goVelocity(const double& vx, const double& vy, const double& vth);
   bool goStop();
+  bool emergencyStop ();
   bool setFootSteps(const OpenHRP::AutoBalancerService::FootstepSequence& fs);
   bool setFootStepsWithParam(const OpenHRP::AutoBalancerService::FootstepSequence& fs, const OpenHRP::AutoBalancerService::StepParamSequence& sps);
   void waitFootSteps();
+  void waitFootStepsEarly(const double tm);
   bool startAutoBalancer(const ::OpenHRP::AutoBalancerService::StrSequence& limbs);
   bool stopAutoBalancer();
   bool setGaitGeneratorParam(const OpenHRP::AutoBalancerService::GaitGeneratorParam& i_param);
@@ -102,6 +104,9 @@ class AutoBalancer
   bool setAutoBalancerParam(const OpenHRP::AutoBalancerService::AutoBalancerParam& i_param);
   bool getAutoBalancerParam(OpenHRP::AutoBalancerService::AutoBalancerParam& i_param);
   bool getFootstepParam(OpenHRP::AutoBalancerService::FootstepParam& i_param);
+  bool adjustFootSteps(const OpenHRP::AutoBalancerService::Footstep& rfootstep, const OpenHRP::AutoBalancerService::Footstep& lfootstep);
+  bool getRemainingFootstepSequence(OpenHRP::AutoBalancerService::FootstepSequence_out o_footstep);
+  bool releaseEmergencyStop();
 
  protected:
   // Configuration variable declaration
@@ -123,6 +128,8 @@ class AutoBalancer
   InPort<TimedDoubleSeq> m_optionalDataIn;
   std::vector<TimedDoubleSeq> m_ref_force;
   std::vector<InPort<TimedDoubleSeq> *> m_ref_forceIn;
+  TimedLong m_emergencySignal;
+  InPort<TimedLong> m_emergencySignalIn;
   // for debug
   TimedPoint3D m_cog;
   
@@ -170,8 +177,8 @@ class AutoBalancer
 
  private:
   struct ABCIKparam {
-    hrp::Vector3 target_p0, current_p0, localPos;
-    hrp::Matrix33 target_r0, current_r0, localR;
+    hrp::Vector3 target_p0, current_p0, localPos, adjust_interpolation_target_p0, adjust_interpolation_org_p0;
+    hrp::Matrix33 target_r0, current_r0, localR, adjust_interpolation_target_r0, adjust_interpolation_org_r0;
     rats::coordinates target_end_coords;
     hrp::Link* target_link;
     hrp::JointPathExPtr manip;
@@ -214,9 +221,10 @@ class AutoBalancer
   hrp::BodyPtr m_robot;
   coil::Mutex m_mutex;
 
-  double zmp_interpolate_time, transition_interpolator_ratio;
+  double transition_interpolator_ratio, transition_time, zmp_transition_time, adjust_footstep_transition_time;
   interpolator *zmp_interpolator;
   interpolator *transition_interpolator;
+  interpolator *adjust_footstep_interpolator;
   hrp::Vector3 input_zmp, input_basePos;
   hrp::Matrix33 input_baseRot;
 
@@ -226,7 +234,7 @@ class AutoBalancer
   std::vector<hrp::Vector3> ref_forces;
 
   unsigned int m_debugLevel;
-  bool is_legged_robot;
+  bool is_legged_robot, is_stop_mode;
   int loop;
   bool graspless_manip_mode;
   std::string graspless_manip_arm;
