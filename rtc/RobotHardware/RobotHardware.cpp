@@ -36,6 +36,7 @@ static const char* robothardware_spec[] =
     "conf.default.isDemoMode", "0",
     "conf.default.fzLimitRatio", "2.0",
     "conf.default.servoErrorLimit", ",",
+    "conf.default.jointAccelerationLimit", "0",
 
     ""
   };
@@ -89,9 +90,14 @@ RTC::ReturnCode_t RobotHardware::onInitialize()
   
   // </rtc-template>
 
-  m_robot = boost::shared_ptr<robot>(new robot());
-
   RTC::Properties& prop = getProperties();
+  double dt = 0.0;
+  coil::stringTo(dt, prop["dt"].c_str());
+  if (!dt) {
+      std::cerr << m_profile.instance_name << ": joint command velocity check is disabled" << std::endl;
+  }
+  m_robot = boost::shared_ptr<robot>(new robot(dt));
+
 
   RTC::Manager& rtcManager = RTC::Manager::instance();
   std::string nameServer = rtcManager.getConfig()["corba.nameservers"];
@@ -164,6 +170,7 @@ RTC::ReturnCode_t RobotHardware::onInitialize()
   bindParameter("isDemoMode", m_isDemoMode, "0");  
   bindParameter("servoErrorLimit", m_robot->m_servoErrorLimit, ",");
   bindParameter("fzLimitRatio", m_robot->m_fzLimitRatio, "2");
+  bindParameter("jointAccelerationLimit", m_robot->m_accLimit, "0");
 
   // </rtc-template>
 
