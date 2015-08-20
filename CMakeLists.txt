@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 2.4)
 project(hrpsys)
 
+enable_testing()
 if(COMMAND cmake_policy)
   cmake_policy(SET CMP0003 NEW)
 endif(COMMAND cmake_policy)
@@ -83,7 +84,7 @@ set(CPACK_PACKAGE_NAME hrpsys-base)
 set(CPACK_PACKAGE_VENDOR "AIST")
 set(CPACK_PACKAGE_CONTACT "Fumio Kanehiro <f-kanehiro@aist.go.jp>")
 set(CPACK_PACKAGE_VERSION_MAJOR 315)
-set(CPACK_PACKAGE_VERSION_MINOR 6)
+set(CPACK_PACKAGE_VERSION_MINOR 7)
 set(CPACK_PACKAGE_VERSION_PATCH 0)
 execute_process(
   COMMAND date +%Y%m%d%H%M
@@ -167,6 +168,9 @@ add_subdirectory(python)
 add_subdirectory(idl)
 add_subdirectory(lib)
 add_subdirectory(ec)
+# option for 3rdparty
+option(USE_QPOASES "Build qpOASES" OFF)
+add_subdirectory(3rdparty)
 add_subdirectory(rtc)
 option(ENABLE_DOXYGEN "Use Doxygen" ON)
 if(ENABLE_DOXYGEN)
