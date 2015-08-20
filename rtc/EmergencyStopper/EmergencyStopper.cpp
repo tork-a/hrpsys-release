@@ -7,13 +7,18 @@
  * $Id$
  */
 
-#include "EmergencyStopper.h"
 #include "util/VectorConvert.h"
 #include <rtm/CorbaNaming.h>
 #include <hrpModel/ModelLoaderUtil.h>
 #include <math.h>
 #include <hrpModel/Link.h>
 #include <hrpModel/Sensor.h>
+#include "RobotHardwareService.hh"
+
+#include "EmergencyStopper.h"
+#include "../SoftErrorLimiter/beep.h"
+
+typedef coil::Guard<coil::Mutex> Guard;
 
 // Module specification
 // <rtc-template block="module_spec">
@@ -43,17 +48,22 @@ EmergencyStopper::EmergencyStopper(RTC::Manager* manager)
       m_qOut("q", m_q),
       m_emergencyModeOut("emergencyMode", m_emergencyMode),
       m_EmergencyStopperServicePort("EmergencyStopperService"),
+      m_servoStateIn("servoStateIn", m_servoState),
       // </rtc-template>
       m_robot(hrp::BodyPtr()),
       m_debugLevel(0),
       dummy(0),
-      loop(0)
+      loop(0),
+      emergency_stopper_beep_count(0)
 {
     m_service0.emergencystopper(this);
+    init_beep();
+    start_beep(3136);
 }
 
 EmergencyStopper::~EmergencyStopper()
 {
+    quit_beep();
 }
 
 
@@ -70,6 +80,7 @@ RTC::ReturnCode_t EmergencyStopper::onInitialize()
     // Set InPort buffers
     addInPort("qRef", m_qRefIn);
     addInPort("emergencySignal", m_emergencySignalIn);
+    addInPort("servoStateIn", m_servoStateIn);
 
     // Set OutPort buffer
     addOutPort("q", m_qOut);
@@ -121,6 +132,19 @@ RTC::ReturnCode_t EmergencyStopper::onInitialize()
         m_stop_posture[i] = 0;
     }
 
+    m_servoState.data.length(m_robot->numJoints());
+    for(int i = 0; i < m_robot->numJoints(); i++) {
+        m_servoState.data[i].length(1);
+        int status = 0;
+        status |= 1<< OpenHRP::RobotHardwareService::CALIB_STATE_SHIFT;
+        status |= 1<< OpenHRP::RobotHardwareService::POWER_STATE_SHIFT;
+        status |= 1<< OpenHRP::RobotHardwareService::SERVO_STATE_SHIFT;
+        status |= 0<< OpenHRP::RobotHardwareService::SERVO_ALARM_SHIFT;
+        status |= 0<< OpenHRP::RobotHardwareService::DRIVER_TEMP_SHIFT;
+        m_servoState.data[i][0] = status;
+    }
+
+    emergency_stopper_beep_freq = static_cast<int>(1.0/(2.0*m_dt)); // 2 times / 1[s]
     return RTC::RTC_OK;
 }
 
@@ -157,6 +181,13 @@ RTC::ReturnCode_t EmergencyStopper::onActivated(RTC::UniqueId ec_id)
 RTC::ReturnCode_t EmergencyStopper::onDeactivated(RTC::UniqueId ec_id)
 {
     std::cout << m_profile.instance_name<< ": onDeactivated(" << ec_id << ")" << std::endl;
+    Guard guard(m_mutex);
+    if (is_stop_mode) {
+        is_stop_mode = false;
+        recover_time = 0;
+        m_interpolator->setGoal(m_qRef.data.get_buffer(), m_dt);
+        m_interpolator->get(m_q.data.get_buffer());
+    }
     return RTC::RTC_OK;
 }
 
@@ -164,7 +195,9 @@ RTC::ReturnCode_t EmergencyStopper::onExecute(RTC::UniqueId ec_id)
 {
     int numJoints = m_robot->numJoints();
     loop++;
-
+    if (m_servoStateIn.isNew()) {
+        m_servoStateIn.read();
+    }
     if (!is_initialized) {
         if (m_qRefIn.isNew()) {
             m_qRefIn.read();
@@ -199,6 +232,7 @@ RTC::ReturnCode_t EmergencyStopper::onExecute(RTC::UniqueId ec_id)
     if (m_emergencySignalIn.isNew()){
         m_emergencySignalIn.read();
         if (!is_stop_mode) {
+            Guard guard(m_mutex);
             std::cerr << "[" << m_profile.instance_name << "] emergencySignal is set!" << std::endl;
             is_stop_mode = true;
         }
@@ -252,6 +286,22 @@ RTC::ReturnCode_t EmergencyStopper::onExecute(RTC::UniqueId ec_id)
     m_emergencyModeOut.write();
 
     prev_is_stop_mode = is_stop_mode;
+
+    // beep sound for emergency stop alert
+    //  check servo for emergency stop beep sound
+    bool has_servoOn = false;
+    for (int i = 0; i < m_robot->numJoints(); i++ ){
+        int servo_state = (m_servoState.data[i][0] & OpenHRP::RobotHardwareService::SERVO_STATE_MASK) >> OpenHRP::RobotHardwareService::SERVO_STATE_SHIFT;
+        has_servoOn = has_servoOn || (servo_state == 1);
+    }
+    //  beep
+    if ( is_stop_mode && has_servoOn ) { // If stop mode and some joint is servoOn
+        if ( emergency_stopper_beep_count % emergency_stopper_beep_freq == 0 && emergency_stopper_beep_count % (emergency_stopper_beep_freq * 3) != 0 ) start_beep(2352, emergency_stopper_beep_freq*0.7);
+        else stop_beep();
+        emergency_stopper_beep_count++;
+    } else {
+        emergency_stopper_beep_count = 0;
+    }
     return RTC::RTC_OK;
 }
 
@@ -292,6 +342,7 @@ RTC::ReturnCode_t EmergencyStopper::onExecute(RTC::UniqueId ec_id)
 
 bool EmergencyStopper::stopMotion()
 {
+    Guard guard(m_mutex);
     if (!is_stop_mode) {
         is_stop_mode = true;
         std::cerr << "[" << m_profile.instance_name << "] stopMotion is called" << std::endl;
@@ -301,6 +352,7 @@ bool EmergencyStopper::stopMotion()
 
 bool EmergencyStopper::releaseMotion()
 {
+    Guard guard(m_mutex);
     if (is_stop_mode) {
         is_stop_mode = false;
         std::cerr << "[" << m_profile.instance_name << "] releaseMotion is called" << std::endl;
