@@ -662,8 +662,8 @@ class HrpsysConfigurator:
             ['st', "Stabilizer"],
             ['co', "CollisionDetector"],
             ['tc', "TorqueController"],
-            # ['te', "ThermoEstimator"],
-            # ['tl', "ThermoLimiter"],
+            ['te', "ThermoEstimator"],
+            ['tl', "ThermoLimiter"],
             ['hes', "EmergencyStopper"],
             ['el', "SoftErrorLimiter"],
             ['log', "DataLogger"]
@@ -946,14 +946,11 @@ class HrpsysConfigurator:
         \verbatim
         NOTE-1: It's known that this method does not do anything after
                 some group operation is done.
-                TODO: at least need elaborated to warn users.
-        \endverbatim
-        \verbatim
-        NOTE-2: that while this method does not check angle value range,
-        any joints could emit position limit over error, which has not yet
-        been thrown by hrpsys so that there's no way to catch on this client
-        side. Worthwhile opening an enhancement ticket for that at
-        hironx' designated issue tracker.
+                TODO: at least need to warn users.
+        NOTE-2: While this method does not check angle value range,
+                any joints could emit position limit over error, which has not yet
+                been thrown by hrpsys so that there's no way to catch on this python client. 
+                Worthwhile opening an enhancement ticket at designated issue tracker.
         \endverbatim
 
         @param jname str: name of joint
@@ -967,12 +964,10 @@ class HrpsysConfigurator:
         '''!@brief
         Set all joint angles.
         \verbatim
-        NOTE-1: that while this method does not check angle value range,
-                any joints could emit position limit over error, which has not yet
-                been thrown by hrpsys so that there's no way to catch on this client
-                side. Worthwhile opening an enhancement ticket for that at
-                hironx' designated issue tracker.
-
+        NOTE: While this method does not check angle value range,
+              any joints could emit position limit over error, which has not yet
+              been thrown by hrpsys so that there's no way to catch on this python client. 
+              Worthwhile opening an enhancement ticket at designated issue tracker.
         \endverbatim
         @param angles list of float: In degree.
         @param tm float: Time to complete.
@@ -987,11 +982,12 @@ class HrpsysConfigurator:
         Set the joint angles to aim. By default it waits interpolation to be
         over.
 
-        Note that while this method does not check angle value range,
-        any joints could emit position limit over error, which has not yet
-        been handled in hrpsys so that there's no way to catch on this client
-        class level. Please consider opening an enhancement ticket for that
-        at hironx' designated issue tracker.
+        \verbatim
+        NOTE: While this method does not check angle value range,
+              any joints could emit position limit over error, which has not yet
+              been thrown by hrpsys so that there's no way to catch on this python client. 
+              Worthwhile opening an enhancement ticket at designated issue tracker.
+        \endverbatim
 
         @param gname str: Name of the joint group.
         @param pose list of float: list of positions and orientations
@@ -1009,12 +1005,10 @@ class HrpsysConfigurator:
         '''!@brief
         Set all joint angles.
         \verbatim
-        NOTE-1: that while this method does not check angle value range,
-                any joints could emit position limit over error, which has not yet
-                been thrown by hrpsys so that there's no way to catch on this client
-                side. Worthwhile opening an enhancement ticket for that at
-                hironx' designated issue tracker.
-
+        NOTE: While this method does not check angle value range,
+              any joints could emit position limit over error, which has not yet
+              been thrown by hrpsys so that there's no way to catch on this python client. 
+              Worthwhile opening an enhancement ticket at designated issue tracker.
         \endverbatim
         @param sequence angles list of float: In degree.
         @param tm sequence of float: Time to complete, In Second
@@ -1028,12 +1022,10 @@ class HrpsysConfigurator:
         '''!@brief
         Set all joint angles.
         \verbatim
-        NOTE-1: that while this method does not check angle value range,
-                any joints could emit position limit over error, which has not yet
-                been thrown by hrpsys so that there's no way to catch on this client
-                side. Worthwhile opening an enhancement ticket for that at
-                hironx' designated issue tracker.
-
+        NOTE: While this method does not check angle value range,
+              any joints could emit position limit over error, which has not yet
+              been thrown by hrpsys so that there's no way to catch on this python client. 
+              Worthwhile opening an enhancement ticket at designated issue tracker.
         \endverbatim
         @param gname str: Name of the joint group.
         @param sequence angles list of float: In degree.
@@ -2003,6 +1995,23 @@ dr=0, dp=0, dw=0, tm=10, wait=True):
         self.stopAutoBalancer()
         for limb in ic_limbs:
             self.ic_svc.waitImpedanceControllerTransition(limb)
+
+    def setFootSteps(self, footstep, overwrite_fs_idx = 0):
+        '''!@brief
+        setFootSteps
+        @param footstep : FootstepSequence.
+        @param overwrite_fs_idx : Index to be overwritten. overwrite_fs_idx is used only in walking.
+        '''
+        self.abc_svc.setFootSteps(footstep, overwrite_fs_idx)
+
+    def setFootStepsWithParam(self, footstep, stepparams, overwrite_fs_idx = 0):
+        '''!@brief
+        setFootSteps
+        @param footstep : FootstepSequence.
+        @param stepparams : StepParamSeuqnce.
+        @param overwrite_fs_idx : Index to be overwritten. overwrite_fs_idx is used only in walking.
+        '''
+        self.abc_svc.setFootStepsWithParam(footstep, stepparams, overwrite_fs_idx)
 
     # ##
     # ## initialize
