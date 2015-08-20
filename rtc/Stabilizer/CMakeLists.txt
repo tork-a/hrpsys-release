@@ -4,19 +4,10 @@ if(NOT BUILD_STABILIZER)
   return()
 endif()
 
-option(USE_QPOASES "Build qpOASES" OFF)
-#set(USE_QPOASES ON)
-message(STATUS "USE_QPOASES=${USE_QPOASES}")
 if(USE_QPOASES)
-  if (NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/qpOASES-3.0)
-    execute_process(COMMAND svn co https://projects.coin-or.org/svn/qpOASES/stable/3.0 ${CMAKE_CURRENT_BINARY_DIR}/qpOASES-3.0)
-    execute_process(COMMAND sed -i -e "s/qpOASES\ STATIC/qpOASES\ SHARED/g" ${CMAKE_CURRENT_BINARY_DIR}/qpOASES-3.0/CMakeLists.txt)
-    execute_process(COMMAND cmake -E chdir ${CMAKE_CURRENT_BINARY_DIR}/qpOASES-3.0 make)
-  endif()
-  #link_directories(${CMAKE_CURRENT_BINARY_DIR}/qpOASES-3.0/libs)
-  add_subdirectory(${CMAKE_CURRENT_BINARY_DIR}/qpOASES-3.0 ${CMAKE_CURRENT_BINARY_DIR}/qpOASES-3.0)
-  link_directories(${CMAKE_CURRENT_BINARY_DIR}/qpOASES-3.0/bin)
-  include_directories(${CMAKE_CURRENT_BINARY_DIR}/qpOASES-3.0/include)
+  add_subdirectory(${CMAKE_CURRENT_BINARY_DIR}/../../3rdparty/qpOASES/qpOASES-3.0 ${CMAKE_CURRENT_BINARY_DIR}/../../3rdparty/qpOASES/qpOASES-3.0)
+  link_directories(${CMAKE_CURRENT_BINARY_DIR}/../../3rdparty/qpOASES/qpOASES-3.0/bin)
+  include_directories(${CMAKE_CURRENT_BINARY_DIR}/../../3rdparty/qpOASES/qpOASES-3.0/include)
   add_definitions(-DUSE_QPOASES)
 endif()
 
@@ -40,6 +31,12 @@ add_executable(testZMPDistributor testZMPDistributor.cpp ZMPDistributor.h ../Imp
 target_link_libraries(testZMPDistributor ${libs})
 set(target Stabilizer StabilizerComp testTwoDofController testZMPDistributor)
 
+add_test(testZMPDistributorHRP2JSKTest0 testZMPDistributor --hrp2jsk --test0 --use-gnuplot false)
+add_test(testZMPDistributorHRP2JSKTest1 testZMPDistributor --hrp2jsk --test1 --use-gnuplot false)
+add_test(testZMPDistributorHRP2JSKTest2 testZMPDistributor --hrp2jsk --test2 --use-gnuplot false)
+add_test(testZMPDistributorJAXONREDTest0 testZMPDistributor --jaxon_red --test0 --use-gnuplot false)
+add_test(testZMPDistributorJAXONREDTest1 testZMPDistributor --jaxon_red --test1 --use-gnuplot false)
+add_test(testZMPDistributorJAXONREDTest2 testZMPDistributor --jaxon_red --test2 --use-gnuplot false)
 
 install(TARGETS ${target}
   RUNTIME DESTINATION bin CONFIGURATIONS Release Debug
