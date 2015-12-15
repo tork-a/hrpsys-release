@@ -60,6 +60,8 @@ AutoBalancer::AutoBalancer(RTC::Manager* manager)
       m_controlSwingSupportTimeOut("controlSwingSupportTime", m_controlSwingSupportTime),
       m_cogOut("cogOut", m_cog),
       m_AutoBalancerServicePort("AutoBalancerService"),
+      m_walkingStatesOut("walkingStates", m_walkingStates),
+      m_sbpCogOffsetOut("sbpCogOffset", m_sbpCogOffset),
       // </rtc-template>
       move_base_gain(0.8),
       m_robot(hrp::BodyPtr()),
@@ -99,6 +101,8 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
     addOutPort("contactStates", m_contactStatesOut);
     addOutPort("controlSwingSupportTime", m_controlSwingSupportTimeOut);
     addOutPort("cogOut", m_cogOut);
+    addOutPort("walkingStates", m_walkingStatesOut);
+    addOutPort("sbpCogOffset", m_sbpCogOffsetOut);
   
     // Set service provider to Ports
     m_AutoBalancerServicePort.registerProvider("service0", "AutoBalancerService", m_service0);
@@ -142,14 +146,6 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
     control_mode = MODE_IDLE;
     loop = 0;
 
-    zmp_interpolator = new interpolator(6, m_dt);
-    zmp_transition_time = 1.0;
-    transition_interpolator = new interpolator(1, m_dt, interpolator::HOFFARBIB, 1);
-    transition_interpolator_ratio = 1.0;
-    adjust_footstep_interpolator = new interpolator(1, m_dt, interpolator::HOFFARBIB, 1);
-    transition_time = 2.0;
-    adjust_footstep_transition_time = 2.0;
-
     // setting from conf file
     // GaitGenerator requires abc_leg_offset and abc_stride_parameter in robot conf file
     // setting leg_pos from conf file
@@ -164,21 +160,6 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
     }
     leg_names.push_back("rleg");
     leg_names.push_back("lleg");
-    // setting stride limitations from conf file
-    double stride_fwd_x_limit = 0.15;
-    double stride_y_limit = 0.05;
-    double stride_th_limit = 10;
-    double stride_bwd_x_limit = 0.05;
-    std::cerr << "[" << m_profile.instance_name << "] abc_stride_parameter : " << stride_fwd_x_limit << "[m], " << stride_y_limit << "[m], " << stride_th_limit << "[deg], " << stride_bwd_x_limit << "[m]" << std::endl;
-    if (default_zmp_offsets.size() == 0) {
-      for (size_t i = 0; i < leg_pos.size(); i++) default_zmp_offsets.push_back(hrp::Vector3::Zero());
-    }
-    if (leg_offset_str.size() > 0) {
-      gg = ggPtr(new rats::gait_generator(m_dt, leg_pos, leg_names, stride_fwd_x_limit/*[m]*/, stride_y_limit/*[m]*/, stride_th_limit/*[deg]*/, stride_bwd_x_limit/*[m]*/));
-      gg->set_default_zmp_offsets(default_zmp_offsets);
-    }
-    gg_is_walking = gg_solved = false;
-    fix_leg_coords = coordinates();
 
     // setting from conf file
     // rleg,TARGET_LINK,BASE_LINK
@@ -202,19 +183,24 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
         tp.localR = Eigen::AngleAxis<double>(tmpv[3], hrp::Vector3(tmpv[0], tmpv[1], tmpv[2])).toRotationMatrix(); // rotation in VRML is represented by axis + angle
         tp.manip = hrp::JointPathExPtr(new hrp::JointPathEx(m_robot, m_robot->link(ee_base), m_robot->link(ee_target), m_dt, false));
         // Fix for toe joint
-        if (ee_name.find("leg") != std::string::npos && tp.manip->numJoints() == 7) { // leg and 7dof joint (6dof leg +1dof toe)
-            std::vector<double> optw;
-            for (int j = 0; j < tp.manip->numJoints(); j++ ) {
-                if ( j == tp.manip->numJoints()-1 ) optw.push_back(0.0);
-                else optw.push_back(1.0);
-            }
+        //   Toe joint is defined as end-link joint in the case that end-effector link != force-sensor link
+        //   Without toe joints, "end-effector link == force-sensor link" is assumed.
+        //   With toe joints, "end-effector link != force-sensor link" is assumed.
+        if (m_robot->link(ee_target)->sensors.size() == 0) { // If end-effector link has no force sensor
+            std::vector<double> optw(tp.manip->numJoints(), 1.0);
+            optw.back() = 0.0; // Set weight = 0 for toe joint by default
             tp.manip->setOptionalWeightVector(optw);
+            tp.has_toe_joint = true;
+        } else {
+            tp.has_toe_joint = false;
         }
+        tp.pos_ik_error_count = tp.rot_ik_error_count = 0;
         ikp.insert(std::pair<std::string, ABCIKparam>(ee_name , tp));
         ikp[ee_name].target_link = m_robot->link(ee_target);
         std::cerr << "[" << m_profile.instance_name << "] End Effector [" << ee_name << "]" << std::endl;
         std::cerr << "[" << m_profile.instance_name << "]   target = " << ikp[ee_name].target_link->name << ", base = " << ee_base << std::endl;
         std::cerr << "[" << m_profile.instance_name << "]   offset_pos = " << tp.localPos.format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "    [", "]")) << "[m]" << std::endl;
+        std::cerr << "[" << m_profile.instance_name << "]   has_toe_joint = " << (tp.has_toe_joint?"true":"false") << std::endl;
         contact_states_index_map.insert(std::pair<std::string, size_t>(ee_name, i));
       }
       m_contactStates.data.length(num);
@@ -230,6 +216,46 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
       for (size_t i = 0; i < num; i++) m_controlSwingSupportTime.data[i] = 0.0;
     }
 
+    std::vector<std::pair<hrp::Link*, hrp::Link*> > interlocking_joints;
+    readInterlockingJointsParamFromProperties(interlocking_joints, m_robot, prop["interlocking_joints"], std::string(m_profile.instance_name));
+    if (interlocking_joints.size() > 0) {
+        for ( std::map<std::string, ABCIKparam>::iterator it = ikp.begin(); it != ikp.end(); it++ ) {
+            std::cerr << "[" << m_profile.instance_name << "] Interlocking Joints for [" << it->first << "]" << std::endl;
+            it->second.manip->setInterlockingJointPairIndices(interlocking_joints, std::string(m_profile.instance_name));
+        }
+    }
+
+    zmp_offset_interpolator = new interpolator(ikp.size()*3, m_dt);
+    zmp_offset_interpolator->setName(std::string(m_profile.instance_name)+" zmp_offset_interpolator");
+    zmp_transition_time = 1.0;
+    transition_interpolator = new interpolator(1, m_dt, interpolator::HOFFARBIB, 1);
+    transition_interpolator->setName(std::string(m_profile.instance_name)+" transition_interpolator");
+    transition_interpolator_ratio = 1.0;
+    adjust_footstep_interpolator = new interpolator(1, m_dt, interpolator::HOFFARBIB, 1);
+    adjust_footstep_interpolator->setName(std::string(m_profile.instance_name)+" adjust_footstep_interpolator");
+    transition_time = 2.0;
+    adjust_footstep_transition_time = 2.0;
+    leg_names_interpolator = new interpolator(1, m_dt, interpolator::HOFFARBIB, 1);
+    leg_names_interpolator->setName(std::string(m_profile.instance_name)+" leg_names_interpolator");
+    leg_names_interpolator_ratio = 1.0;
+
+    // setting stride limitations from conf file
+    double stride_fwd_x_limit = 0.15;
+    double stride_y_limit = 0.05;
+    double stride_th_limit = 10;
+    double stride_bwd_x_limit = 0.05;
+    std::cerr << "[" << m_profile.instance_name << "] abc_stride_parameter : " << stride_fwd_x_limit << "[m], " << stride_y_limit << "[m], " << stride_th_limit << "[deg], " << stride_bwd_x_limit << "[m]" << std::endl;
+    if (default_zmp_offsets.size() == 0) {
+      for (size_t i = 0; i < ikp.size(); i++) default_zmp_offsets.push_back(hrp::Vector3::Zero());
+    }
+    if (leg_offset_str.size() > 0) {
+      gg = ggPtr(new rats::gait_generator(m_dt, leg_pos, leg_names, stride_fwd_x_limit/*[m]*/, stride_y_limit/*[m]*/, stride_th_limit/*[deg]*/, stride_bwd_x_limit/*[m]*/));
+      gg->set_default_zmp_offsets(default_zmp_offsets);
+    }
+    gg_is_walking = gg_solved = false;
+    m_walkingStates.data = false;
+    fix_leg_coords = coordinates();
+
     // load virtual force sensors
     readVirtualForceSensorParamFromProperties(m_vfs, m_robot, prop["virtual_force_sensor"], std::string(m_profile.instance_name));
     // ref force port
@@ -238,6 +264,8 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
     int nforce  = npforce + nvforce;
     m_ref_force.resize(nforce);
     m_ref_forceIn.resize(nforce);
+    m_force.resize(nforce);
+    m_ref_forceOut.resize(nforce);
     m_limbCOPOffset.resize(nforce);
     m_limbCOPOffsetOut.resize(nforce);
     for (unsigned int i=0; i<npforce; i++){
@@ -256,6 +284,15 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
         registerInPort(std::string("ref_"+sensor_names[i]).c_str(), *m_ref_forceIn[i]);
         std::cerr << "[" << m_profile.instance_name << "]   name = " << std::string("ref_"+sensor_names[i]) << std::endl;
         ref_forces.push_back(hrp::Vector3(0,0,0));
+    }
+    // set force port
+    for (unsigned int i=0; i<nforce; i++){
+        m_ref_forceOut[i] = new OutPort<TimedDoubleSeq>(std::string(sensor_names[i]).c_str(), m_force[i]);
+        m_force[i].data.length(6);
+        m_force[i].data[0] = m_force[i].data[1] = m_force[i].data[2] = 0.0;
+        m_force[i].data[3] = m_force[i].data[4] = m_force[i].data[5] = 0.0;
+        registerOutPort(std::string(sensor_names[i]).c_str(), *m_ref_forceOut[i]);
+        std::cerr << "[" << m_profile.instance_name << "]   name = " << std::string(sensor_names[i]) << std::endl;
     }
     // set limb cop offset port
     std::cerr << "[" << m_profile.instance_name << "] limbCOPOffset ports (" << nforce << ")" << std::endl;
@@ -285,6 +322,12 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
     graspless_manip_p_gain = hrp::Vector3::Zero();
 
     is_stop_mode = false;
+    has_ik_failed = false;
+    is_hand_fix_mode = false;
+
+    pos_ik_thre = 0.1*1e-3; // [m]
+    rot_ik_thre = (1e-2)*M_PI/180.0; // [rad]
+    ik_error_debug_print_freq = static_cast<int>(0.2/m_dt); // once per 0.2 [s]
 
     return RTC::RTC_OK;
 }
@@ -293,9 +336,10 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
 
 RTC::ReturnCode_t AutoBalancer::onFinalize()
 {
-  delete zmp_interpolator;
+  delete zmp_offset_interpolator;
   delete transition_interpolator;
   delete adjust_footstep_interpolator;
+  delete leg_names_interpolator;
   return RTC::RTC_OK;
 }
 
@@ -369,10 +413,10 @@ RTC::ReturnCode_t AutoBalancer::onExecute(RTC::UniqueId ec_id)
           if (m_optionalData.data.length() >= contact_states_index_map.size()*2) {
             // current optionalData is contactstates x limb and controlSwingSupportTime x limb
             //   If contactStates in optionalData is 1.0, m_contactStates is true. Otherwise, false.
-            m_contactStates.data[contact_states_index_map["rleg"]] = (std::fabs(m_optionalData.data[contact_states_index_map["rleg"]]-1.0)<0.1)?true:false;
-            m_contactStates.data[contact_states_index_map["lleg"]] = (std::fabs(m_optionalData.data[contact_states_index_map["lleg"]]-1.0)<0.1)?true:false;
-            m_controlSwingSupportTime.data[contact_states_index_map["rleg"]] = m_optionalData.data[contact_states_index_map["rleg"]+contact_states_index_map.size()];
-            m_controlSwingSupportTime.data[contact_states_index_map["lleg"]] = m_optionalData.data[contact_states_index_map["lleg"]+contact_states_index_map.size()];
+            for ( std::map<std::string, ABCIKparam>::iterator it = ikp.begin(); it != ikp.end(); it++ ) {
+                m_contactStates.data[contact_states_index_map[it->first]] = isOptionalDataContact(it->first);
+                m_controlSwingSupportTime.data[contact_states_index_map[it->first]] = m_optionalData.data[contact_states_index_map[it->first]+contact_states_index_map.size()];
+            }
             if ( !m_contactStates.data[contact_states_index_map["rleg"]] && !m_contactStates.data[contact_states_index_map["lleg"]] ) { // If two feet have no contact, force set double support contact
               m_contactStates.data[contact_states_index_map["rleg"]] = true;
               m_contactStates.data[contact_states_index_map["lleg"]] = true;
@@ -393,6 +437,7 @@ RTC::ReturnCode_t AutoBalancer::onExecute(RTC::UniqueId ec_id)
     hrp::Matrix33 ref_baseRot;
     hrp::Vector3 rel_ref_zmp; // ref zmp in base frame
     if ( is_legged_robot ) {
+      gg->proc_zmp_weight_map_interpolation();
       getCurrentParameters();
       getTargetParameters();
       bool is_transition_interpolator_empty = transition_interpolator->isEmpty();
@@ -480,6 +525,11 @@ RTC::ReturnCode_t AutoBalancer::onExecute(RTC::UniqueId ec_id)
       m_cog.data.y = ref_cog(1);
       m_cog.data.z = ref_cog(2);
       m_cog.tm = m_qRef.tm;
+      // sbpCogOffset
+      m_sbpCogOffset.data.x = sbp_cog_offset(0);
+      m_sbpCogOffset.data.y = sbp_cog_offset(1);
+      m_sbpCogOffset.data.z = sbp_cog_offset(2);
+      m_sbpCogOffset.tm = m_qRef.tm;
     }
     m_basePosOut.write();
     m_baseRpyOut.write();
@@ -487,6 +537,7 @@ RTC::ReturnCode_t AutoBalancer::onExecute(RTC::UniqueId ec_id)
     m_basePoseOut.write();
     m_zmpOut.write();
     m_cogOut.write();
+    m_sbpCogOffsetOut.write();
 
     // reference acceleration
     hrp::Sensor* sen = m_robot->sensor<hrp::RateGyroSensor>("gyrometer");
@@ -506,6 +557,14 @@ RTC::ReturnCode_t AutoBalancer::onExecute(RTC::UniqueId ec_id)
     m_contactStatesOut.write();
     m_controlSwingSupportTime.tm = m_qRef.tm;
     m_controlSwingSupportTimeOut.write();
+    m_walkingStates.data = gg_is_walking;
+    m_walkingStates.tm = m_qRef.tm;
+    m_walkingStatesOut.write();
+
+    for (unsigned int i=0; i<m_ref_forceOut.size(); i++){
+        m_force[i].tm = m_qRef.tm;
+        m_ref_forceOut[i]->write();
+    }
 
     for (unsigned int i=0; i<m_limbCOPOffsetOut.size(); i++){
         m_limbCOPOffset[i].tm = m_qRef.tm;
@@ -538,17 +597,26 @@ void AutoBalancer::getTargetParameters()
   //
   if (control_mode != MODE_IDLE) {
     coordinates tmp_fix_coords;
-    if (!zmp_interpolator->isEmpty()) {
-      double default_zmp_offsets_output[leg_names.size() * 3];
-      zmp_interpolator->get(default_zmp_offsets_output, true);
-      for (size_t i = 0; i < leg_names.size(); i++)
+    if (!zmp_offset_interpolator->isEmpty()) {
+      double *default_zmp_offsets_output = new double[ikp.size()*3];
+      zmp_offset_interpolator->get(default_zmp_offsets_output, true);
+      for (size_t i = 0; i < ikp.size(); i++)
         for (size_t j = 0; j < 3; j++)
           default_zmp_offsets[i](j) = default_zmp_offsets_output[i*3+j];
+      delete[] default_zmp_offsets_output;
       if (DEBUGP) {
         std::cerr << "[" << m_profile.instance_name << "] default_zmp_offsets (interpolated)" << std::endl;
-        for (size_t i = 0; i < leg_names.size(); i++)
-            std::cerr << "[" << m_profile.instance_name << "]   " << leg_names[i] << " = " << default_zmp_offsets[i].format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "    [", "]")) << "[m]" << std::endl;
+        std::map<leg_type, std::string> leg_type_map = gg->get_leg_type_map();
+        for (size_t i = 0; i < leg_names.size(); i++) {
+            std::map<leg_type, std::string>::const_iterator dst = std::find_if(leg_type_map.begin(), leg_type_map.end(), (&boost::lambda::_1->* &std::map<leg_type, std::string>::value_type::second == leg_names[i]));
+            std::cerr << "[" << m_profile.instance_name << "]   " << leg_names[i] << " = " << default_zmp_offsets[dst->first].format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "    [", "]")) << "[m]" << std::endl;
+        }
       }
+    }
+    if (!leg_names_interpolator->isEmpty()) {
+        leg_names_interpolator->get(&leg_names_interpolator_ratio, true);
+    }else {
+        leg_names_interpolator_ratio = 1.0;
     }
     if ( gg_is_walking ) {
       gg->set_default_zmp_offsets(default_zmp_offsets);
@@ -576,46 +644,90 @@ void AutoBalancer::getTargetParameters()
           }
       }
       gg->get_swing_support_mid_coords(tmp_fix_coords);
-      // TODO : assume biped
-      switch (gg->get_current_support_states().front()) {
-      case BOTH:
-        m_contactStates.data[contact_states_index_map["rleg"]] = true;
-        m_contactStates.data[contact_states_index_map["lleg"]] = true;
-        break;
-      case RLEG:
-        m_contactStates.data[contact_states_index_map["rleg"]] = true;
-        m_contactStates.data[contact_states_index_map["lleg"]] = false;
-        break;
-      case LLEG:
-        m_contactStates.data[contact_states_index_map["rleg"]] = false;
-        m_contactStates.data[contact_states_index_map["lleg"]] = true;
-        break;
-      default:
-        std::cerr << "not implemented yet " << std::endl;
-        break;
+      // set contactStates
+      {
+          std::vector<std::string> tmp_current_support_states_names;
+          {
+              std::vector<leg_type> tmp_current_support_states = gg->get_current_support_states();
+              std::map<leg_type, std::string> leg_type_map = gg->get_leg_type_map();
+              for (std::vector<leg_type>::const_iterator it = tmp_current_support_states.begin(); it != tmp_current_support_states.end(); it++)
+                  tmp_current_support_states_names.push_back(leg_type_map[*it]);
+          }
+          // Set Contact States for ee not included in leg_names to false
+          for ( std::map<std::string, size_t>::iterator it = contact_states_index_map.begin(); it != contact_states_index_map.end(); it++ ) {
+              m_contactStates.data[it->second] = false;
+          }
+          for (std::vector<std::string>::const_iterator it = leg_names.begin(); it != leg_names.end(); it++) {
+              std::vector<std::string>::const_iterator dst = std::find_if(tmp_current_support_states_names.begin(), tmp_current_support_states_names.end(), boost::lambda::_1 == *it);
+              if (dst != tmp_current_support_states_names.end()) {
+                  m_contactStates.data[contact_states_index_map[*it]] = true;
+              } else {
+                  m_contactStates.data[contact_states_index_map[*it]] = false;
+              }
+          }
       }
-      m_controlSwingSupportTime.data[contact_states_index_map["rleg"]] = gg->get_current_swing_time(0);
-      m_controlSwingSupportTime.data[contact_states_index_map["lleg"]] = gg->get_current_swing_time(1);
-      m_limbCOPOffset[contact_states_index_map[gg->get_swing_leg_names().front()]].data.x = gg->get_swing_foot_zmp_offsets().front()(0);
-      m_limbCOPOffset[contact_states_index_map[gg->get_swing_leg_names().front()]].data.y = gg->get_swing_foot_zmp_offsets().front()(1);
-      m_limbCOPOffset[contact_states_index_map[gg->get_swing_leg_names().front()]].data.z = gg->get_swing_foot_zmp_offsets().front()(2);
-      m_limbCOPOffset[contact_states_index_map[gg->get_support_leg_names().front()]].data.x = gg->get_support_foot_zmp_offsets().front()(0);
-      m_limbCOPOffset[contact_states_index_map[gg->get_support_leg_names().front()]].data.y = gg->get_support_foot_zmp_offsets().front()(1);
-      m_limbCOPOffset[contact_states_index_map[gg->get_support_leg_names().front()]].data.z = gg->get_support_foot_zmp_offsets().front()(2);
+      // set controlSwingSupportTime
+      {
+          std::map<leg_type, std::string> leg_type_map = gg->get_leg_type_map();
+          for (std::map<std::string, ABCIKparam>::const_iterator it = ikp.begin(); it != ikp.end(); it++) {
+              std::map<leg_type, std::string>::const_iterator dst = std::find_if(leg_type_map.begin(), leg_type_map.end(), (&boost::lambda::_1->* &std::map<leg_type, std::string>::value_type::second == it->first));
+              m_controlSwingSupportTime.data[contact_states_index_map[it->first]] = gg->get_current_swing_time(dst->first);
+          }
+      }
+      // set ref_forces
+      {
+          std::vector<hrp::Vector3> ee_pos;
+          for (size_t i = 0 ; i < leg_names.size(); i++) {
+              ABCIKparam& tmpikp = ikp[leg_names[i]];
+              ee_pos.push_back(tmpikp.target_p0 + tmpikp.target_r0 * tmpikp.localPos + tmpikp.target_r0 * tmpikp.localR * default_zmp_offsets[i]);
+          }
+          double alpha = (ref_zmp - ee_pos[1]).norm() / (ee_pos[0] - ee_pos[1]).norm();
+          if (alpha>1.0) alpha = 1.0;
+          if (alpha<0.0) alpha = 0.0;
+          if (DEBUGP) {
+          std::cerr << "[" << m_profile.instance_name << "] alpha:" << alpha << std::endl;
+          }
+          double mg = m_robot->totalMass() * gg->get_gravitational_acceleration();
+          m_force[0].data[0] = alpha * mg;
+          m_force[1].data[0] = (1-alpha) * mg;
+      }
+      // set limbCOPOffset
+      {
+          std::vector<std::string> swg_leg_nms = gg->get_swing_leg_names();
+          for (size_t i = 0; i < swg_leg_nms.size(); i++) {
+              m_limbCOPOffset[contact_states_index_map[swg_leg_nms.at(i)]].data.x = gg->get_swing_foot_zmp_offsets().at(i)(0);
+              m_limbCOPOffset[contact_states_index_map[swg_leg_nms.at(i)]].data.y = gg->get_swing_foot_zmp_offsets().at(i)(1);
+              m_limbCOPOffset[contact_states_index_map[swg_leg_nms.at(i)]].data.z = gg->get_swing_foot_zmp_offsets().at(i)(2);
+          }
+      }
+      {
+          std::vector<std::string> sup_leg_nms = gg->get_support_leg_names();
+          for (size_t i = 0; i < sup_leg_nms.size(); i++) {
+              m_limbCOPOffset[contact_states_index_map[sup_leg_nms.at(i)]].data.x = gg->get_support_foot_zmp_offsets().at(i)(0);
+              m_limbCOPOffset[contact_states_index_map[sup_leg_nms.at(i)]].data.y = gg->get_support_foot_zmp_offsets().at(i)(1);
+              m_limbCOPOffset[contact_states_index_map[sup_leg_nms.at(i)]].data.z = gg->get_support_foot_zmp_offsets().at(i)(2);
+          }
+      }
     } else {
       tmp_fix_coords = fix_leg_coords;
       // double support by default
-      m_contactStates.data[contact_states_index_map["rleg"]] = true;
-      m_contactStates.data[contact_states_index_map["lleg"]] = true;
-      // controlSwingSupportTime is not used while double support period, 1.0 is neglected
-      m_controlSwingSupportTime.data[contact_states_index_map["rleg"]] = 1.0;
-      m_controlSwingSupportTime.data[contact_states_index_map["lleg"]] = 1.0;
-      m_limbCOPOffset[contact_states_index_map["rleg"]].data.x = default_zmp_offsets[0](0);
-      m_limbCOPOffset[contact_states_index_map["rleg"]].data.y = default_zmp_offsets[0](1);
-      m_limbCOPOffset[contact_states_index_map["rleg"]].data.z = default_zmp_offsets[0](2);
-      m_limbCOPOffset[contact_states_index_map["lleg"]].data.x = default_zmp_offsets[1](0);
-      m_limbCOPOffset[contact_states_index_map["lleg"]].data.y = default_zmp_offsets[1](1);
-      m_limbCOPOffset[contact_states_index_map["lleg"]].data.z = default_zmp_offsets[1](2);
+      {
+          std::map<leg_type, std::string> leg_type_map = gg->get_leg_type_map();
+          for (std::map<std::string, ABCIKparam>::const_iterator it = ikp.begin(); it != ikp.end(); it++) {
+              std::vector<std::string>::const_iterator dst = std::find_if(leg_names.begin(), leg_names.end(), (boost::lambda::_1 == it->first));
+              if (dst != leg_names.end()) {
+                  m_contactStates.data[contact_states_index_map[it->first]] = true;
+              } else {
+                  m_contactStates.data[contact_states_index_map[it->first]] = false;
+              }
+              // controlSwingSupportTime is not used while double support period, 1.0 is neglected
+              m_controlSwingSupportTime.data[contact_states_index_map[it->first]] = 1.0;
+              std::map<leg_type, std::string>::const_iterator dst2 = std::find_if(leg_type_map.begin(), leg_type_map.end(), (&boost::lambda::_1->* &std::map<leg_type, std::string>::value_type::second == it->first));
+              m_limbCOPOffset[contact_states_index_map[it->first]].data.x = default_zmp_offsets.at(dst2->first)(0);
+              m_limbCOPOffset[contact_states_index_map[it->first]].data.y = default_zmp_offsets.at(dst2->first)(1);
+              m_limbCOPOffset[contact_states_index_map[it->first]].data.z = default_zmp_offsets.at(dst2->first)(2);
+          }
+      }
     }
     if (!adjust_footstep_interpolator->isEmpty()) {
         double tmp = 0.0;
@@ -646,6 +758,7 @@ void AutoBalancer::getTargetParameters()
       tmp_fix_coords.rot(0,1) = yv1(0); tmp_fix_coords.rot(1,1) = yv1(1); tmp_fix_coords.rot(2,1) = yv1(2);
       tmp_fix_coords.rot(0,2) = ez(0); tmp_fix_coords.rot(1,2) = ez(1); tmp_fix_coords.rot(2,2) = ez(2);
     }
+    // Fix pos
     fixLegToCoords(tmp_fix_coords.pos, tmp_fix_coords.rot);
 
     /* update ref_forces ;; sp's absolute -> rmc's absolute */
@@ -673,18 +786,56 @@ void AutoBalancer::getTargetParameters()
         it->second.target_r0 = it->second.target_link->R;
       }
     }
+    // Move hand for hand fix mode
+    //   If arms' ABCIKparam.is_active is true, move hands according to cog velocity.
+    //   If is_hand_fix_mode is false, no hand fix mode and move hands according to cog velocity.
+    //   If is_hand_fix_mode is true, hand fix mode and do not move hands in Y axis in tmp_fix_coords.rot.    
+    if (gg_is_walking) {
+        // hand control while walking = solve hand ik with is_hand_fix_mode and solve hand ik without is_hand_fix_mode
+        bool is_hand_control_while_walking = false;
+        for ( std::map<std::string, ABCIKparam>::iterator it = ikp.begin(); it != ikp.end(); it++ ) {
+            if ( it->second.is_active && std::find(leg_names.begin(), leg_names.end(), it->first) == leg_names.end()
+                 && it->first.find("arm") != std::string::npos ) {
+                is_hand_control_while_walking = true;
+            }
+        }
+        if (is_hand_control_while_walking) {
+        //if (false) { // Disabled temporarily
+            // Store hand_fix_initial_offset in the initialization of walking
+            if (is_hand_fix_initial) hand_fix_initial_offset = tmp_fix_coords.rot.transpose() * (hrp::Vector3(gg->get_cog()(0), gg->get_cog()(1), tmp_fix_coords.pos(2)) - tmp_fix_coords.pos);
+            is_hand_fix_initial = false;
+            hrp::Vector3 dif_p = hrp::Vector3(gg->get_cog()(0), gg->get_cog()(1), tmp_fix_coords.pos(2)) - tmp_fix_coords.pos - tmp_fix_coords.rot * hand_fix_initial_offset;
+            if (is_hand_fix_mode) {
+                dif_p = tmp_fix_coords.rot.transpose() * dif_p;
+                dif_p(1) = 0;
+                dif_p = tmp_fix_coords.rot * dif_p;
+            }
+            for ( std::map<std::string, ABCIKparam>::iterator it = ikp.begin(); it != ikp.end(); it++ ) {
+                if ( it->second.is_active && std::find(leg_names.begin(), leg_names.end(), it->first) == leg_names.end()
+                     && it->first.find("arm") != std::string::npos ) {
+                    it->second.target_p0 = it->second.target_p0 + dif_p;
+                }
+            }
+        }
+    }
 
     hrp::Vector3 tmp_foot_mid_pos(hrp::Vector3::Zero());
-    for (size_t i = 0; i < leg_names.size(); i++) {
-        ABCIKparam& tmpikp = ikp[leg_names[i]];
-        // get target_end_coords
-        tmpikp.target_end_coords.pos = tmpikp.target_p0 + tmpikp.target_r0 * tmpikp.localPos;
-        tmpikp.target_end_coords.rot = tmpikp.target_r0 * tmpikp.localR;
-        // for foot_mid_pos
-        tmp_foot_mid_pos += tmpikp.target_link->p + tmpikp.target_link->R * tmpikp.localPos + tmpikp.target_link->R * tmpikp.localR * default_zmp_offsets[i];
+    {
+        std::map<leg_type, std::string> leg_type_map = gg->get_leg_type_map();
+        std::map<leg_type, double> zmp_weight_map = gg->get_zmp_weight_map();
+        double sum_of_weight = 0.0;
+        for (size_t i = 0; i < leg_names.size(); i++) {
+            ABCIKparam& tmpikp = ikp[leg_names[i]];
+            // get target_end_coords
+            tmpikp.target_end_coords.pos = tmpikp.target_p0 + tmpikp.target_r0 * tmpikp.localPos;
+            tmpikp.target_end_coords.rot = tmpikp.target_r0 * tmpikp.localR;
+            // for foot_mid_pos
+            std::map<leg_type, std::string>::const_iterator dst = std::find_if(leg_type_map.begin(), leg_type_map.end(), (&boost::lambda::_1->* &std::map<leg_type, std::string>::value_type::second == leg_names[i]));
+            tmp_foot_mid_pos += (tmpikp.target_p0 + tmpikp.target_r0 * tmpikp.localPos + tmpikp.target_r0 * tmpikp.localR * default_zmp_offsets[i]) * zmp_weight_map[dst->first];
+            sum_of_weight += zmp_weight_map[dst->first];
+        }
+        tmp_foot_mid_pos *= (1.0 / sum_of_weight);
     }
-    tmp_foot_mid_pos *= (1.0 / leg_names.size());
-
     //
     {
         if ( gg_is_walking && gg->get_lcg_count() == static_cast<size_t>(gg->get_default_step_time()/(2*m_dt))-1) {
@@ -743,9 +894,11 @@ void AutoBalancer::fixLegToCoords (const hrp::Vector3& fix_pos, const hrp::Matri
   // get current foot mid pos + rot
   std::vector<coordinates> foot_coords;
   for (size_t i = 0; i < leg_names.size(); i++) {
-      ABCIKparam& tmpikp = ikp[leg_names[i]];
-      foot_coords.push_back(coordinates((tmpikp.target_link->p + tmpikp.target_link->R * tmpikp.localPos),
-                                        (tmpikp.target_link->R * tmpikp.localR)));
+      if (leg_names[i].find("leg") != std::string::npos) {
+          ABCIKparam& tmpikp = ikp[leg_names[i]];
+          foot_coords.push_back(coordinates((tmpikp.target_link->p + tmpikp.target_link->R * tmpikp.localPos),
+                                            (tmpikp.target_link->R * tmpikp.localR)));
+      }
   }
   coordinates current_foot_mid_coords;
   multi_mid_coords(current_foot_mid_coords, foot_coords);
@@ -766,9 +919,30 @@ bool AutoBalancer::solveLimbIKforLimb (ABCIKparam& param)
   hrp::Vector3 vel_p, vel_r;
   vel_p = param.target_p0 - param.current_p0;
   rats::difference_rotation(vel_r, param.current_r0, param.target_r0);
-  vel_p *= transition_interpolator_ratio;
-  vel_r *= transition_interpolator_ratio;
+  vel_p *= transition_interpolator_ratio * leg_names_interpolator_ratio;
+  vel_r *= transition_interpolator_ratio * leg_names_interpolator_ratio;
   param.manip->calcInverseKinematics2Loop(vel_p, vel_r, 1.0, 0.001, 0.01, &qrefv);
+  // IK check
+  vel_p = param.target_p0 - param.target_link->p;
+  rats::difference_rotation(vel_r, param.target_link->R, param.target_r0);
+  if (vel_p.norm() > pos_ik_thre && transition_interpolator->isEmpty()) {
+      if (param.pos_ik_error_count % ik_error_debug_print_freq == 0) {
+          std::cerr << "[" << m_profile.instance_name << "] Too large IK error (vel_p) = [" << vel_p(0) << " " << vel_p(1) << " " << vel_p(2) << "][m], count = " << param.pos_ik_error_count << std::endl;
+      }
+      param.pos_ik_error_count++;
+      has_ik_failed = true;
+  } else {
+      param.pos_ik_error_count = 0;
+  }
+  if (vel_r.norm() > rot_ik_thre && transition_interpolator->isEmpty()) {
+      if (param.rot_ik_error_count % ik_error_debug_print_freq == 0) {
+          std::cerr << "[" << m_profile.instance_name << "] Too large IK error (vel_r) = [" << vel_r(0) << " " << vel_r(1) << " " << vel_r(2) << "][rad], count = " << param.rot_ik_error_count << std::endl;
+      }
+      param.rot_ik_error_count++;
+      has_ik_failed = true;
+  } else {
+      param.rot_ik_error_count = 0;
+  }
   return true;
 }
 
@@ -788,12 +962,13 @@ void AutoBalancer::solveLimbIK ()
   hrp::Vector3 tmp_input_sbp = hrp::Vector3(0,0,0);
   static_balance_point_proc_one(tmp_input_sbp, ref_zmp(2));
   hrp::Vector3 dif_cog = tmp_input_sbp - ref_cog;
+  dif_cog *= leg_names_interpolator_ratio;
   dif_cog(2) = m_robot->rootLink()->p(2) - target_root_p(2);
   m_robot->rootLink()->p = m_robot->rootLink()->p + -1 * move_base_gain * dif_cog;
   m_robot->rootLink()->R = target_root_R;
   // Fix for toe joint
   for ( std::map<std::string, ABCIKparam>::iterator it = ikp.begin(); it != ikp.end(); it++ ) {
-      if (it->second.is_active && (it->first.find("leg") != std::string::npos) && it->second.manip->numJoints() == 7) {
+      if (it->second.is_active && it->second.has_toe_joint && gg->get_use_toe_joint()) {
           int i = it->second.target_link->jointId;
           if (gg->get_swing_leg_names().front() == it->first) {
               m_robot->joint(i)->q = qrefv[i] + -1 * gg->get_foot_dif_rot_angle();
@@ -892,6 +1067,10 @@ void AutoBalancer::startWalking ()
   }
   {
     Guard guard(m_mutex);
+    has_ik_failed = false;
+    for ( std::map<std::string, ABCIKparam>::iterator it = ikp.begin(); it != ikp.end(); it++ ) {
+        it->second.pos_ik_error_count = it->second.rot_ik_error_count = 0;
+    }
     std::vector<std::string> init_swing_leg_names(gg->get_footstep_front_leg_names());
     std::vector<std::string> tmp_all_limbs(leg_names);
     std::vector<std::string> init_support_leg_names;
@@ -908,6 +1087,7 @@ void AutoBalancer::startWalking ()
     gg->set_default_zmp_offsets(default_zmp_offsets);
     gg->initialize_gait_parameter(ref_cog, init_support_leg_steps, init_swing_leg_dst_steps);
   }
+  is_hand_fix_initial = true;
   while ( !gg->proc_one_tick() );
   {
     Guard guard(m_mutex);
@@ -919,7 +1099,9 @@ void AutoBalancer::stopWalking ()
 {
   std::vector<coordinates> tmp_end_coords_list;
   for (std::vector<string>::iterator it = leg_names.begin(); it != leg_names.end(); it++) {
-      tmp_end_coords_list.push_back(ikp[*it].target_end_coords);
+      if ((*it).find("leg") != std::string::npos) {
+          tmp_end_coords_list.push_back(ikp[*it].target_end_coords);
+      }
   }
   multi_mid_coords(fix_leg_coords, tmp_end_coords_list);
   fixLegToCoords(fix_leg_coords.pos, fix_leg_coords.rot);
@@ -931,6 +1113,10 @@ void AutoBalancer::stopWalking ()
 bool AutoBalancer::startAutoBalancer (const OpenHRP::AutoBalancerService::StrSequence& limbs)
 {
   if (control_mode == MODE_IDLE) {
+    has_ik_failed = false;
+    for ( std::map<std::string, ABCIKparam>::iterator it = ikp.begin(); it != ikp.end(); it++ ) {
+        it->second.pos_ik_error_count = it->second.rot_ik_error_count = 0;
+    }
     startABCparam(limbs);
     waitABCTransition();
     return_control_mode = MODE_ABC;
@@ -1012,84 +1198,116 @@ bool AutoBalancer::releaseEmergencyStop ()
   return true;
 }
 
-bool AutoBalancer::setFootSteps(const OpenHRP::AutoBalancerService::FootstepSequence& fs, CORBA::Long overwrite_fs_idx)
+bool AutoBalancer::setFootSteps(const OpenHRP::AutoBalancerService::FootstepsSequence& fss, CORBA::Long overwrite_fs_idx)
 {
-  OpenHRP::AutoBalancerService::StepParamSequence sps;
-  sps.length(fs.length());
+  OpenHRP::AutoBalancerService::StepParamsSequence spss;
+  spss.length(fss.length());
   // If gg_is_walking is false, initial footstep will be double support. So, set 0 for step_height and toe heel angles.
   // If gg_is_walking is true, do not set to 0.
-  for (size_t i = 0; i < sps.length(); i++) sps[i].step_height = ((!gg_is_walking && i==0) ? 0.0 : gg->get_default_step_height());
-  for (size_t i = 0; i < sps.length(); i++) sps[i].step_time = gg->get_default_step_time();
-  for (size_t i = 0; i < sps.length(); i++) sps[i].toe_angle = ((!gg_is_walking && i==0) ? 0.0 : gg->get_toe_angle());
-  for (size_t i = 0; i < sps.length(); i++) sps[i].heel_angle = ((!gg_is_walking && i==0) ? 0.0 : gg->get_heel_angle());
-  setFootStepsWithParam(fs, sps, overwrite_fs_idx);
+  for (size_t i = 0; i < spss.length(); i++) {
+      spss[i].sps.length(fss[i].fs.length());
+      for (size_t j = 0; j < spss[i].sps.length(); j++) {
+          spss[i].sps[j].step_height = ((!gg_is_walking && i==0) ? 0.0 : gg->get_default_step_height());
+          spss[i].sps[j].step_time = gg->get_default_step_time();
+          spss[i].sps[j].toe_angle = ((!gg_is_walking && i==0) ? 0.0 : gg->get_toe_angle());
+          spss[i].sps[j].heel_angle = ((!gg_is_walking && i==0) ? 0.0 : gg->get_heel_angle());
+      }
+  }
+  setFootStepsWithParam(fss, spss, overwrite_fs_idx);
 }
 
-bool AutoBalancer::setFootStepsWithParam(const OpenHRP::AutoBalancerService::FootstepSequence& fs, const OpenHRP::AutoBalancerService::StepParamSequence& sps, CORBA::Long overwrite_fs_idx)
+bool AutoBalancer::setFootStepsWithParam(const OpenHRP::AutoBalancerService::FootstepsSequence& fss, const OpenHRP::AutoBalancerService::StepParamsSequence& spss, CORBA::Long overwrite_fs_idx)
 {
-  if (!is_stop_mode) {
-    std::cerr << "[" << m_profile.instance_name << "] setFootSteps" << std::endl;
+    if (!is_stop_mode) {
+        std::cerr << "[" << m_profile.instance_name << "] setFootStepsList" << std::endl;
 
-    // Initial footstep Snapping
-    coordinates tmpfs, initial_support_coords, initial_input_coords, fstrans;
-    if (gg_is_walking) {
-        if (overwrite_fs_idx <= 0) {
-            std::cerr << "[" << m_profile.instance_name << "]   Invalid overwrite index = " << overwrite_fs_idx << std::endl;
+        // Initial footstep Snapping
+        coordinates tmpfs, fstrans;
+        step_node initial_support_step, initial_input_step;
+        {
+            std::vector<step_node> initial_support_steps;
+            if (gg_is_walking) {
+                if (overwrite_fs_idx <= 0) {
+                    std::cerr << "[" << m_profile.instance_name << "]   Invalid overwrite index = " << overwrite_fs_idx << std::endl;
+                    return false;
+                }
+                if (!gg->get_footstep_nodes_by_index(initial_support_steps, overwrite_fs_idx-1)) {
+                    std::cerr << "[" << m_profile.instance_name << "]   Invalid overwrite index = " << overwrite_fs_idx << std::endl;
+                    return false;
+                }
+            } else {
+                // If walking, snap initial leg to current ABC foot coords.
+                for (size_t i = 0; i < fss[0].fs.length(); i++) {
+                    initial_support_steps.push_back(step_node(std::string(fss[0].fs[i].leg), ikp[std::string(fss[0].fs[i].leg)].target_end_coords, 0, 0, 0, 0));
+                }
+            }
+            initial_support_step = initial_support_steps.front(); /* use only one leg for representation */
+        }
+        {
+            std::map<leg_type, std::string> leg_type_map = gg->get_leg_type_map();
+            for (size_t i = 0; i < fss[0].fs.length(); i++) {
+                if (std::string(fss[0].fs[i].leg) == leg_type_map[initial_support_step.l_r]) {
+                    coordinates tmp;
+                    memcpy(tmp.pos.data(), fss[0].fs[i].pos, sizeof(double)*3);
+                    tmp.rot = (Eigen::Quaternion<double>(fss[0].fs[i].rot[0], fss[0].fs[i].rot[1], fss[0].fs[i].rot[2], fss[0].fs[i].rot[3])).normalized().toRotationMatrix(); // rtc: (x, y, z, w) but eigen: (w, x, y, z)
+                    initial_input_step = step_node(std::string(fss[0].fs[i].leg), tmp, 0, 0, 0, 0);
+                }
+            }
+        }
+
+        // Get footsteps
+        std::vector< std::vector<coordinates> > fs_vec_list;
+        std::vector< std::vector<std::string> > leg_name_vec_list;
+        for (size_t i = 0; i < fss.length(); i++) {
+            std::vector<coordinates> fs_vec;
+            std::vector<std::string> leg_name_vec;
+            for (size_t j = 0; j < fss[i].fs.length(); j++) {
+                std::string leg(fss[i].fs[j].leg);
+                if (std::find(leg_names.begin(), leg_names.end(), leg) != leg_names.end()) {
+                    memcpy(tmpfs.pos.data(), fss[i].fs[j].pos, sizeof(double)*3);
+                    tmpfs.rot = (Eigen::Quaternion<double>(fss[i].fs[j].rot[0], fss[i].fs[j].rot[1], fss[i].fs[j].rot[2], fss[i].fs[j].rot[3])).normalized().toRotationMatrix(); // rtc: (x, y, z, w) but eigen: (w, x, y, z)
+                    initial_input_step.worldcoords.transformation(fstrans, tmpfs);
+                    tmpfs = initial_support_step.worldcoords;
+                    tmpfs.transform(fstrans);
+                } else {
+                    std::cerr << "[" << m_profile.instance_name << "]   No such target : " << leg << std::endl;
+                    return false;
+                }
+                leg_name_vec.push_back(leg);
+                fs_vec.push_back(tmpfs);
+            }
+            leg_name_vec_list.push_back(leg_name_vec);
+            fs_vec_list.push_back(fs_vec);
+        }
+        if (spss.length() != fs_vec_list.size()) {
+            std::cerr << "[" << m_profile.instance_name << "]   StepParam length " << spss.length () << " != Footstep length " << fs_vec_list.size() << std::endl;
             return false;
         }
-        if (!gg->get_footstep_coords_by_index(initial_support_coords, overwrite_fs_idx-1)) {
-            std::cerr << "[" << m_profile.instance_name << "]   Invalid overwrite index = " << overwrite_fs_idx << std::endl;
-            return false;
+        std::cerr << "[" << m_profile.instance_name << "] print footsteps " << std::endl;
+        std::vector< std::vector<step_node> > fnsl;
+        for (size_t i = 0; i < fs_vec_list.size(); i++) {
+            if (!(gg_is_walking && i == 0)) { // If initial footstep, e.g., not walking, pass user-defined footstep list. If walking, pass cdr footsteps in order to neglect initial double support leg.
+                std::vector<step_node> tmp_fns;
+                for (size_t j = 0; j < fs_vec_list.at(i).size(); j++) {
+                    tmp_fns.push_back(step_node(leg_name_vec_list[i][j], fs_vec_list[i][j], spss[i].sps[j].step_height, spss[i].sps[j].step_time, spss[i].sps[j].toe_angle, spss[i].sps[j].heel_angle));
+                }
+                fnsl.push_back(tmp_fns);
+            }
         }
+        if (gg_is_walking) {
+            std::cerr << "[" << m_profile.instance_name << "]  Set overwrite footsteps" << std::endl;
+            gg->set_overwrite_foot_steps_list(fnsl);
+            gg->set_overwrite_foot_step_index(overwrite_fs_idx);
+        } else {
+            std::cerr << "[" << m_profile.instance_name << "]  Set normal footsteps" << std::endl;
+            gg->set_foot_steps_list(fnsl);
+            startWalking();
+        }
+        return true;
     } else {
-        // If walking, snap initial leg to current ABC foot coords.
-        initial_support_coords = ikp[std::string(fs[0].leg)].target_end_coords;
-    }
-    memcpy(initial_input_coords.pos.data(), fs[0].pos, sizeof(double)*3);
-    initial_input_coords.rot = (Eigen::Quaternion<double>(fs[0].rot[0], fs[0].rot[1], fs[0].rot[2], fs[0].rot[3])).normalized().toRotationMatrix(); // rtc: (x, y, z, w) but eigen: (w, x, y, z)
-
-    // Get footsteps
-    std::vector<coordinates> fs_vec;
-    std::vector<std::string> leg_name_vec;
-    for (size_t i = 0; i < fs.length(); i++) {
-      std::string leg(fs[i].leg);
-      if (leg == "rleg" || leg == "lleg") {
-        memcpy(tmpfs.pos.data(), fs[i].pos, sizeof(double)*3);
-        tmpfs.rot = (Eigen::Quaternion<double>(fs[i].rot[0], fs[i].rot[1], fs[i].rot[2], fs[i].rot[3])).normalized().toRotationMatrix(); // rtc: (x, y, z, w) but eigen: (w, x, y, z)
-        initial_input_coords.transformation(fstrans, tmpfs);
-        tmpfs = initial_support_coords;
-        tmpfs.transform(fstrans);
-        leg_name_vec.push_back(leg);
-        fs_vec.push_back(tmpfs);
-      } else {
-          std::cerr << "[" << m_profile.instance_name << "]   No such target : " << leg << std::endl;
-        return false;
-      }
-    }
-    if (sps.length() != fs_vec.size()) {
-        std::cerr << "[" << m_profile.instance_name << "]   StepParam length " << sps.length () << " != Footstep length " << fs_vec.size() << std::endl;
+        std::cerr << "[" << m_profile.instance_name << "] Cannot setFootSteps while walking." << std::endl;
         return false;
     }
-    std::cerr << "[" << m_profile.instance_name << "] print footsteps " << std::endl;
-    std::vector< std::vector<step_node> > fnsl;
-    for (size_t i = 0; i < fs_vec.size(); i++) {
-        if (!(gg_is_walking && i == 0)) // If initial footstep, e.g., not walking, pass user-defined footstep list. If walking, pass cdr footsteps in order to neglect initial double support leg.
-            fnsl.push_back(boost::assign::list_of(step_node(leg_name_vec[i], fs_vec[i], sps[i].step_height, sps[i].step_time, sps[i].toe_angle, sps[i].heel_angle)));
-    }
-    if (gg_is_walking) {
-        std::cerr << "[" << m_profile.instance_name << "]  Set overwrite footsteps" << std::endl;
-        gg->set_overwrite_foot_steps_list(fnsl);
-        gg->set_overwrite_foot_step_index(overwrite_fs_idx);
-    } else {
-        std::cerr << "[" << m_profile.instance_name << "]  Set normal footsteps" << std::endl;
-        gg->set_foot_steps_list(fnsl);
-        startWalking();
-    }
-    return true;
-  } else {
-    std::cerr << "[" << m_profile.instance_name << "] Cannot setFootSteps while walking." << std::endl;
-    return false;
-  }
 }
 
 void AutoBalancer::waitFootSteps()
@@ -1121,8 +1339,20 @@ bool AutoBalancer::setGaitGeneratorParam(const OpenHRP::AutoBalancerService::Gai
   gg->set_leg_default_translate_pos(off);
   gg->set_default_step_time(i_param.default_step_time);
   gg->set_default_step_height(i_param.default_step_height);
-  gg->set_default_double_support_ratio(i_param.default_double_support_ratio);
-  gg->set_default_double_support_static_ratio(i_param.default_double_support_static_ratio);
+  gg->set_default_double_support_ratio_before(i_param.default_double_support_ratio/2.0);
+  gg->set_default_double_support_ratio_after(i_param.default_double_support_ratio/2.0);
+  gg->set_default_double_support_static_ratio_before(i_param.default_double_support_static_ratio/2.0);
+  gg->set_default_double_support_static_ratio_after(i_param.default_double_support_static_ratio/2.0);
+  gg->set_default_double_support_ratio_swing_before(i_param.default_double_support_ratio/2.0);
+  gg->set_default_double_support_ratio_swing_after(i_param.default_double_support_ratio/2.0);
+  // gg->set_default_double_support_ratio_before(i_param.default_double_support_ratio_before);
+  // gg->set_default_double_support_ratio_after(i_param.default_double_support_ratio_after);
+  // gg->set_default_double_support_static_ratio_before(i_param.default_double_support_static_ratio_before);
+  // gg->set_default_double_support_static_ratio_after(i_param.default_double_support_static_ratio_after);
+  // gg->set_default_double_support_ratio_swing_before(i_param.default_double_support_ratio_before);
+  // gg->set_default_double_support_ratio_swing_after(i_param.default_double_support_ratio_after);
+  // gg->set_default_double_support_ratio_swing_before(i_param.default_double_support_ratio_swing_before);
+  // gg->set_default_double_support_ratio_swing_after(i_param.default_double_support_ratio_swing_after);
   if (i_param.default_orbit_type == OpenHRP::AutoBalancerService::SHUFFLING) {
     gg->set_default_orbit_type(SHUFFLING);
   } else if (i_param.default_orbit_type == OpenHRP::AutoBalancerService::CYCLOID) {
@@ -1135,6 +1365,8 @@ bool AutoBalancer::setGaitGeneratorParam(const OpenHRP::AutoBalancerService::Gai
     gg->set_default_orbit_type(CYCLOIDDELAY);
   } else if (i_param.default_orbit_type == OpenHRP::AutoBalancerService::CYCLOIDDELAYKICK) {
     gg->set_default_orbit_type(CYCLOIDDELAYKICK);
+  } else if (i_param.default_orbit_type == OpenHRP::AutoBalancerService::CROSS) {
+    gg->set_default_orbit_type(CROSS);
   }
   gg->set_swing_trajectory_delay_time_offset(i_param.swing_trajectory_delay_time_offset);
   gg->set_swing_trajectory_final_distance_weight(i_param.swing_trajectory_final_distance_weight);
@@ -1152,6 +1384,7 @@ bool AutoBalancer::setGaitGeneratorParam(const OpenHRP::AutoBalancerService::Gai
   gg->set_toe_heel_phase_ratio(tmp_ratio);
   gg->set_use_toe_joint(i_param.use_toe_joint);
   gg->set_use_toe_heel_transition(i_param.use_toe_heel_transition);
+  gg->set_zmp_weight_map(boost::assign::map_list_of<leg_type, double>(RLEG, i_param.zmp_weight_map[0])(LLEG, i_param.zmp_weight_map[1])(RARM, i_param.zmp_weight_map[2])(LARM, i_param.zmp_weight_map[3]));
   gg->set_optional_go_pos_finalize_footstep_num(i_param.optional_go_pos_finalize_footstep_num);
 
   // print
@@ -1173,8 +1406,14 @@ bool AutoBalancer::getGaitGeneratorParam(OpenHRP::AutoBalancerService::GaitGener
   }
   i_param.default_step_time = gg->get_default_step_time();
   i_param.default_step_height = gg->get_default_step_height();
-  i_param.default_double_support_ratio = gg->get_default_double_support_ratio();
-  i_param.default_double_support_static_ratio = gg->get_default_double_support_static_ratio();
+  i_param.default_double_support_ratio_before = gg->get_default_double_support_ratio_before();
+  i_param.default_double_support_ratio_after = gg->get_default_double_support_ratio_after();
+  i_param.default_double_support_static_ratio_before = gg->get_default_double_support_static_ratio_before();
+  i_param.default_double_support_static_ratio_after = gg->get_default_double_support_static_ratio_after();
+  i_param.default_double_support_ratio_swing_before = gg->get_default_double_support_ratio_swing_before();
+  i_param.default_double_support_ratio_swing_after = gg->get_default_double_support_ratio_swing_after();
+  i_param.default_double_support_ratio = i_param.default_double_support_ratio_before + i_param.default_double_support_ratio_after;
+  i_param.default_double_support_static_ratio = i_param.default_double_support_static_ratio_before + i_param.default_double_support_static_ratio_after;
   if (gg->get_default_orbit_type() == SHUFFLING) {
     i_param.default_orbit_type = OpenHRP::AutoBalancerService::SHUFFLING;
   } else if (gg->get_default_orbit_type() == CYCLOID) {
@@ -1187,6 +1426,8 @@ bool AutoBalancer::getGaitGeneratorParam(OpenHRP::AutoBalancerService::GaitGener
     i_param.default_orbit_type = OpenHRP::AutoBalancerService::CYCLOIDDELAY;
   } else if (gg->get_default_orbit_type() == CYCLOIDDELAYKICK) {
     i_param.default_orbit_type = OpenHRP::AutoBalancerService::CYCLOIDDELAYKICK;
+  } else if (gg->get_default_orbit_type() == CROSS) {
+    i_param.default_orbit_type = OpenHRP::AutoBalancerService::CROSS;
   }
 
   hrp::Vector3 tmpv = gg->get_stair_trajectory_way_point_offset();
@@ -1207,25 +1448,45 @@ bool AutoBalancer::getGaitGeneratorParam(OpenHRP::AutoBalancerService::GaitGener
   for (int i = 0; i < gg->get_NUM_TH_PHASES(); i++) i_param.toe_heel_phase_ratio[i] = ratio[i];
   i_param.use_toe_joint = gg->get_use_toe_joint();
   i_param.use_toe_heel_transition = gg->get_use_toe_heel_transition();
+  std::map<leg_type, double> tmp_zmp_weight_map = gg->get_zmp_weight_map();
+  i_param.zmp_weight_map[0] = tmp_zmp_weight_map[RLEG];
+  i_param.zmp_weight_map[1] = tmp_zmp_weight_map[LLEG];
+  i_param.zmp_weight_map[2] = tmp_zmp_weight_map[RARM];
+  i_param.zmp_weight_map[3] = tmp_zmp_weight_map[LARM];
   i_param.optional_go_pos_finalize_footstep_num = gg->get_optional_go_pos_finalize_footstep_num();
   return true;
 };
 
 bool AutoBalancer::setAutoBalancerParam(const OpenHRP::AutoBalancerService::AutoBalancerParam& i_param)
 {
+  Guard guard(m_mutex);
   std::cerr << "[" << m_profile.instance_name << "] setAutoBalancerParam" << std::endl;
-  double default_zmp_offsets_array[6];
+  double *default_zmp_offsets_array = new double[ikp.size()*3];
   move_base_gain = i_param.move_base_gain;
-  for (size_t i = 0; i < 2; i++)
+  for (size_t i = 0; i < ikp.size(); i++)
     for (size_t j = 0; j < 3; j++)
       default_zmp_offsets_array[i*3+j] = i_param.default_zmp_offsets[i][j];
   zmp_transition_time = i_param.zmp_transition_time;
   adjust_footstep_transition_time = i_param.adjust_footstep_transition_time;
-  if (zmp_interpolator->isEmpty()) {
-      zmp_interpolator->clear();
-      zmp_interpolator->go(default_zmp_offsets_array, zmp_transition_time, true);
+  if (zmp_offset_interpolator->isEmpty()) {
+      zmp_offset_interpolator->clear();
+      zmp_offset_interpolator->go(default_zmp_offsets_array, zmp_transition_time, true);
   } else {
       std::cerr << "[" << m_profile.instance_name << "]   default_zmp_offsets cannot be set because interpolating." << std::endl;
+  }
+  if (control_mode == MODE_IDLE) {
+    switch (i_param.use_force_mode) {
+    case OpenHRP::AutoBalancerService::MODE_NO_FORCE:
+        use_force = MODE_NO_FORCE;
+        break;
+    case OpenHRP::AutoBalancerService::MODE_REF_FORCE:
+        use_force = MODE_REF_FORCE;
+        break;
+    default:
+        break;
+    }
+  } else {
+      std::cerr << "[" << m_profile.instance_name << "]   use_force_mode cannot be changed to [" << i_param.use_force_mode << "] during MODE_ABC, MODE_SYNC_TO_IDLE or MODE_SYNC_TO_ABC." << std::endl;
   }
   graspless_manip_mode = i_param.graspless_manip_mode;
   graspless_manip_arm = std::string(i_param.graspless_manip_arm);
@@ -1238,14 +1499,59 @@ bool AutoBalancer::setAutoBalancerParam(const OpenHRP::AutoBalancerService::Auto
                                                                           i_param.graspless_manip_reference_trans_rot[2],
                                                                           i_param.graspless_manip_reference_trans_rot[3]).normalized().toRotationMatrix()); // rtc: (x, y, z, w) but eigen: (w, x, y, z)
   transition_time = i_param.transition_time;
-  leg_names.clear();
+  std::vector<std::string> cur_leg_names, dst_leg_names;
+  cur_leg_names = leg_names;
   for (size_t i = 0; i < i_param.leg_names.length(); i++) {
-      leg_names.push_back(std::string(i_param.leg_names[i]));
+      dst_leg_names.push_back(std::string(i_param.leg_names[i]));
   }
+  std::sort(cur_leg_names.begin(), cur_leg_names.end());
+  std::sort(dst_leg_names.begin(), dst_leg_names.end());
+  if (cur_leg_names != dst_leg_names) {
+      if (leg_names_interpolator->isEmpty()) {
+          leg_names.clear();
+          leg_names = dst_leg_names;
+          if (control_mode == MODE_ABC) {
+              double tmp_ratio = 0.0;
+              leg_names_interpolator->set(&tmp_ratio);
+              tmp_ratio = 1.0;
+              leg_names_interpolator->go(&tmp_ratio, 5.0, true);
+              control_mode = MODE_SYNC_TO_ABC;
+          }
+      }
+  } else {
+      std::cerr << "[" << m_profile.instance_name << "]   leg_names cannot be set because interpolating." << std::endl;
+  }
+  pos_ik_thre = i_param.pos_ik_thre;
+  rot_ik_thre = i_param.rot_ik_thre;
+  if (!gg_is_walking) {
+      is_hand_fix_mode = i_param.is_hand_fix_mode;
+      std::cerr << "[" << m_profile.instance_name << "]   is_hand_fix_mode = " << is_hand_fix_mode << std::endl;
+  } else {
+      std::cerr << "[" << m_profile.instance_name << "]   is_hand_fix_mode cannot be set in (gg_is_walking = true). Current is_hand_fix_mode is " << (is_hand_fix_mode?"true":"false") << std::endl;
+  }
+  if (control_mode == MODE_IDLE) {
+      for (size_t i = 0; i < i_param.end_effector_list.length(); i++) {
+          std::map<std::string, ABCIKparam>::iterator it = ikp.find(std::string(i_param.end_effector_list[i].leg));
+          memcpy(it->second.localPos.data(), i_param.end_effector_list[i].pos, sizeof(double)*3);
+          it->second.localR = (Eigen::Quaternion<double>(i_param.end_effector_list[i].rot[0], i_param.end_effector_list[i].rot[1], i_param.end_effector_list[i].rot[2], i_param.end_effector_list[i].rot[3])).normalized().toRotationMatrix();
+      }
+  } else {
+      std::cerr << "[" << m_profile.instance_name << "] cannot change end-effectors except during MODE_IDLE" << std::endl;
+  }
+  for (std::map<std::string, ABCIKparam>::iterator it = ikp.begin(); it != ikp.end(); it++) {
+      std::cerr << "[" << m_profile.instance_name << "] End Effector [" << it->first << "]" << std::endl;
+      std::cerr << "[" << m_profile.instance_name << "]   localpos = " << it->second.localPos.format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "    [", "]")) << "[m]" << std::endl;
+      std::cerr << "[" << m_profile.instance_name << "]   localR = " << it->second.localR.format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", "\n", "    [", "]")) << std::endl;
+  }
+
   std::cerr << "[" << m_profile.instance_name << "]   move_base_gain = " << move_base_gain << std::endl;
-  std::cerr << "[" << m_profile.instance_name << "]   default_zmp_offsets = "
-            << default_zmp_offsets_array[0] << " " << default_zmp_offsets_array[1] << " " << default_zmp_offsets_array[2] << " "
-            << default_zmp_offsets_array[3] << " " << default_zmp_offsets_array[4] << " " << default_zmp_offsets_array[5] << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "]   default_zmp_offsets = ";
+  for (size_t i = 0; i < ikp.size() * 3; i++) {
+      std::cerr << default_zmp_offsets_array[i] << " ";
+  }
+  std::cerr << std::endl;
+  delete[] default_zmp_offsets_array;
+  std::cerr << "[" << m_profile.instance_name << "]   use_force_mode = " << use_force << std::endl;
   std::cerr << "[" << m_profile.instance_name << "]   graspless_manip_mode = " << graspless_manip_mode << std::endl;
   std::cerr << "[" << m_profile.instance_name << "]   graspless_manip_arm = " << graspless_manip_arm << std::endl;
   std::cerr << "[" << m_profile.instance_name << "]   graspless_manip_p_gain = " << graspless_manip_p_gain.format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "    [", "]")) << std::endl;
@@ -1253,20 +1559,30 @@ bool AutoBalancer::setAutoBalancerParam(const OpenHRP::AutoBalancerService::Auto
   std::cerr << "[" << m_profile.instance_name << "]   graspless_manip_reference_trans_rot = " << graspless_manip_reference_trans_coords.rot.format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", "\n", "    [", "]")) << std::endl;
   std::cerr << "[" << m_profile.instance_name << "]   transition_time = " << transition_time << "[s], zmp_transition_time = " << zmp_transition_time << "[s], adjust_footstep_transition_time = " << adjust_footstep_transition_time << "[s]" << std::endl;
   for (std::vector<std::string>::iterator it = leg_names.begin(); it != leg_names.end(); it++) std::cerr << "[" << m_profile.instance_name << "]   leg_names [" << *it << "]" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "]   pos_ik_thre = " << pos_ik_thre << "[m], rot_ik_thre = " << rot_ik_thre << "[rad]" << std::endl;
   return true;
 };
 
 bool AutoBalancer::getAutoBalancerParam(OpenHRP::AutoBalancerService::AutoBalancerParam& i_param)
 {
   i_param.move_base_gain = move_base_gain;
-  for (size_t i = 0; i < 2; i++)
-    for (size_t j = 0; j < 3; j++)
-      i_param.default_zmp_offsets[i][j] = default_zmp_offsets[i](j);
+  i_param.default_zmp_offsets.length(ikp.size());
+  for (size_t i = 0; i < ikp.size(); i++) {
+      i_param.default_zmp_offsets[i].length(3);
+      for (size_t j = 0; j < 3; j++) {
+          i_param.default_zmp_offsets[i][j] = default_zmp_offsets[i](j);
+      }
+  }
   switch(control_mode) {
   case MODE_IDLE: i_param.controller_mode = OpenHRP::AutoBalancerService::MODE_IDLE; break;
   case MODE_ABC: i_param.controller_mode = OpenHRP::AutoBalancerService::MODE_ABC; break;
   case MODE_SYNC_TO_IDLE: i_param.controller_mode = OpenHRP::AutoBalancerService::MODE_SYNC_TO_IDLE; break;
   case MODE_SYNC_TO_ABC: i_param.controller_mode = OpenHRP::AutoBalancerService::MODE_SYNC_TO_ABC; break;
+  default: break;
+  }
+  switch(use_force) {
+  case MODE_NO_FORCE: i_param.use_force_mode = OpenHRP::AutoBalancerService::MODE_NO_FORCE; break;
+  case MODE_REF_FORCE: i_param.use_force_mode = OpenHRP::AutoBalancerService::MODE_REF_FORCE; break;
   default: break;
   }
   i_param.graspless_manip_mode = graspless_manip_mode;
@@ -1285,6 +1601,19 @@ bool AutoBalancer::getAutoBalancerParam(OpenHRP::AutoBalancerService::AutoBalanc
   i_param.adjust_footstep_transition_time = adjust_footstep_transition_time;
   i_param.leg_names.length(leg_names.size());
   for (size_t i = 0; i < leg_names.size(); i++) i_param.leg_names[i] = leg_names.at(i).c_str();
+  i_param.pos_ik_thre = pos_ik_thre;
+  i_param.rot_ik_thre = rot_ik_thre;
+  i_param.is_hand_fix_mode = is_hand_fix_mode;
+  i_param.end_effector_list.length(ikp.size());
+  {
+      size_t i = 0;
+      for (std::map<std::string, ABCIKparam>::const_iterator it = ikp.begin(); it != ikp.end(); it++) {
+          copyRatscoords2Footstep(i_param.end_effector_list[i],
+                                  coordinates(it->second.localPos, it->second.localR));
+          i_param.end_effector_list[i].leg = it->first.c_str();
+          i++;
+      }
+  }
   return true;
 };
 
