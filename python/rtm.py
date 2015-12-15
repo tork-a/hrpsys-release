@@ -391,7 +391,10 @@ def findRTCmanager(hostname=None, rnc=None):
             mgr = None
         return mgr
 
-    import CORBA
+    try:
+        import CORBA
+    except:
+        print('import CORBA failed in findRTCmanager and neglect it for old python environment.')
     # fqdn
     mgr = None
     hostnames = [hostname, hostname.split(".")[0],
@@ -415,7 +418,10 @@ def findRTCmanager(hostname=None, rnc=None):
 def findRTC(name, rnc=None):
     try:
         obj = findObject(name, "rtc", rnc)
-        rtc = RTcomponent(obj._narrow(RTC.RTObject))
+        try:
+            rtc = RTcomponent(obj._narrow(RTC.RTObject))
+        except TypeError:
+            rtc = RTcomponent(obj._narrow(RTC.DataFlowComponent))
         cxts = rtc.ref.get_participating_contexts()
         if len(cxts) > 0:
             rtc.ec = cxts[0]

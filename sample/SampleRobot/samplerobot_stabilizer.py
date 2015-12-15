@@ -55,15 +55,30 @@ def demoSetParameter():
     stp_org.k_tpcc_x=[4.0, 4.0]
     stp_org.k_brot_p=[0.0, 0.0]
     # for eefm
-    stp_org.eefm_leg_inside_margin=71.12*1e-3
-    stp_org.eefm_leg_outside_margin=71.12*1e-3
-    stp_org.eefm_leg_front_margin=182.0*1e-3
-    stp_org.eefm_leg_rear_margin=72.0*1e-3
+    tmp_leg_inside_margin=71.12*1e-3
+    tmp_leg_outside_margin=71.12*1e-3
+    tmp_leg_front_margin=182.0*1e-3
+    tmp_leg_rear_margin=72.0*1e-3
+    rleg_vertices = [OpenHRP.StabilizerService.TwoDimensionVertex(pos=[tmp_leg_front_margin, tmp_leg_inside_margin]),
+                     OpenHRP.StabilizerService.TwoDimensionVertex(pos=[tmp_leg_front_margin, -1*tmp_leg_outside_margin]),
+                     OpenHRP.StabilizerService.TwoDimensionVertex(pos=[-1*tmp_leg_rear_margin, -1*tmp_leg_outside_margin]),
+                     OpenHRP.StabilizerService.TwoDimensionVertex(pos=[-1*tmp_leg_rear_margin, tmp_leg_inside_margin])]
+    lleg_vertices = [OpenHRP.StabilizerService.TwoDimensionVertex(pos=[tmp_leg_front_margin, tmp_leg_outside_margin]),
+                     OpenHRP.StabilizerService.TwoDimensionVertex(pos=[tmp_leg_front_margin, -1*tmp_leg_inside_margin]),
+                     OpenHRP.StabilizerService.TwoDimensionVertex(pos=[-1*tmp_leg_rear_margin, -1*tmp_leg_inside_margin]),
+                     OpenHRP.StabilizerService.TwoDimensionVertex(pos=[-1*tmp_leg_rear_margin, tmp_leg_outside_margin])]
+    rarm_vertices = rleg_vertices
+    larm_vertices = lleg_vertices
+    stp_org.eefm_support_polygon_vertices_sequence = map (lambda x : OpenHRP.StabilizerService.SupportPolygonVertices(vertices=x), [lleg_vertices, rleg_vertices, larm_vertices, rarm_vertices])
+    stp_org.eefm_leg_inside_margin=tmp_leg_inside_margin
+    stp_org.eefm_leg_outside_margin=tmp_leg_outside_margin
+    stp_org.eefm_leg_front_margin=tmp_leg_front_margin
+    stp_org.eefm_leg_rear_margin=tmp_leg_rear_margin
     stp_org.eefm_k1=[-1.39899,-1.39899]
     stp_org.eefm_k2=[-0.386111,-0.386111]
     stp_org.eefm_k3=[-0.175068,-0.175068]
-    stp_org.eefm_rot_damping_gain=20*1.6*10 # Stiff parameter for simulation
-    stp_org.eefm_pos_damping_gain=[3500*50, 3500*50, 3500*1.0*5] # Stiff parameter for simulation
+    stp_org.eefm_rot_damping_gain = [[20*1.6*1.5, 20*1.6*1.5, 1e5]]*4
+    stp_org.eefm_pos_damping_gain = [[3500*50, 3500*50, 3500*1.0*1.5]]*4
     hcf.st_svc.setParameter(stp_org)
     stp = hcf.st_svc.getParameter()
     vcheck = stp.k_tpcc_p == stp_org.k_tpcc_p and stp.k_tpcc_x == stp_org.k_tpcc_x and stp.k_brot_p == stp_org.k_brot_p
@@ -71,9 +86,9 @@ def demoSetParameter():
         print >> sys.stderr, "  setParameter() => OK", vcheck
     assert(vcheck)
 
-def checkActualBaseAttitude():
+def checkActualBaseAttitude(thre=5.0):
     rpy = rtm.readDataPort(hcf.rh.port("WAIST")).data.orientation
-    ret = math.degrees(rpy.r) < 0.1 and math.degrees(rpy.p) < 0.1
+    ret = abs(math.degrees(rpy.r)) < thre and abs(math.degrees(rpy.p)) < thre
     print >> sys.stderr, "  actual base rpy = ", ret, "(", rpy, ")"
     return ret
 
@@ -84,9 +99,12 @@ def demoStartStopTPCCST ():
         stp.st_algorithm=OpenHRP.StabilizerService.TPCC
         hcf.st_svc.setParameter(stp)
         hcf.startStabilizer ()
-        hcf.abc_svc.goPos(0.5, 0.1, 10)
-        hcf.abc_svc.waitFootSteps()
+        #hcf.abc_svc.goPos(0.5, 0.1, 10)
+        #hcf.abc_svc.waitFootSteps()
         hcf.stopStabilizer ()
+        # Wait for non-st osscilation being samall
+        hcf.seq_svc.setJointAngles(initial_pose, 2.0)
+        hcf.waitInterpolation()
         ret = checkActualBaseAttitude()
         if ret:
             print >> sys.stderr, "  Start and Stop Stabilizer => OK"
@@ -105,6 +123,9 @@ def demoStartStopEEFMQPST ():
         hcf.abc_svc.goPos(0.3, 0, 0)
         hcf.abc_svc.waitFootSteps()
         hcf.stopStabilizer ()
+        # Wait for non-st osscilation being samall
+        hcf.seq_svc.setJointAngles(initial_pose, 2.0)
+        hcf.waitInterpolation()
         ret = checkActualBaseAttitude()
         if ret:
             print >> sys.stderr, "  Start and Stop Stabilizer => OK"
