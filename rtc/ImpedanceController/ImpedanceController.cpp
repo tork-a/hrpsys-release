@@ -239,6 +239,18 @@ RTC::ReturnCode_t ImpedanceController::onInitialize()
         std::cerr << "[" << m_profile.instance_name << "]   sensor = " << sensor_name << ", sensor-link = " << sensor->link->name << ", ee_name = " << ee_name << ", ee-link = " << target_link->name << std::endl;
     }
 
+    std::vector<std::pair<hrp::Link*, hrp::Link*> > interlocking_joints;
+    readInterlockingJointsParamFromProperties(interlocking_joints, m_robot, prop["interlocking_joints"], std::string(m_profile.instance_name));
+    if (interlocking_joints.size() > 0) {
+        for ( std::map<std::string, ImpedanceParam>::iterator it = m_impedance_param.begin(); it != m_impedance_param.end(); it++ ) {
+            std::cerr << "[" << m_profile.instance_name << "] Interlocking Joints for [" << it->first << "]" << std::endl;
+            it->second.manip->setInterlockingJointPairIndices(interlocking_joints, std::string(m_profile.instance_name));
+        }
+    }
+
+    otd = boost::shared_ptr<ObjectTurnaroundDetector>(new ObjectTurnaroundDetector(m_dt));
+    otd->setPrintStr(std::string(m_profile.instance_name));
+
     // allocate memory for outPorts
     m_q.data.length(dof);
     qrefv.resize(dof);
@@ -430,7 +442,7 @@ RTC::ReturnCode_t ImpedanceController::onExecute(RTC::UniqueId ec_id)
 	while(it != m_impedance_param.end()){
             ImpedanceParam& param = it->second;
             if (param.is_active) {
-                if ( loop % 200 == 0 ) {
+                if (DEBUGP) {
                   std::cerr << "[" << m_profile.instance_name << "] impedance mode " << it->first << " transition count = " << param.transition_count << ", ";
                   std::cerr << "MDK = " << param.M_p << " " << param.D_p << " " << param.K_p << ", ";
                   std::cerr << "MDK = " << param.M_r << " " << param.D_r << " " << param.K_r << ", ";
@@ -555,6 +567,7 @@ RTC::ReturnCode_t ImpedanceController::onExecute(RTC::UniqueId ec_id)
 
 void ImpedanceController::calcForceMoment ()
 {
+      std::vector<hrp::Vector3> otd_fmv;
       for (unsigned int i=0; i<m_forceIn.size(); i++){
         if ( m_force[i].data.length()==6 ) {
           std::string sensor_name = m_forceIn[i]->name();
@@ -602,6 +615,12 @@ void ImpedanceController::calcForceMoment ()
           // World frame
           abs_ref_forces[sensor_name] = ref_data_p;
           abs_ref_moments[sensor_name] = ref_data_r;
+          // tmp
+          if ( find(otd_sensor_names.begin(), otd_sensor_names.end(), sensor_name) != otd_sensor_names.end() ) {
+              otd_fmv.push_back(abs_forces[sensor_name]);
+              // if ( DEBUGP ) {
+              // }
+          }
           if ( DEBUGP ) {
             std::cerr << "[" << m_profile.instance_name << "]   abs force  = " << abs_forces[sensor_name].format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "[", "]")) << "[N]" << std::endl;
             std::cerr << "[" << m_profile.instance_name << "]   abs moment = " << abs_moments[sensor_name].format(Eigen::IOFormat(Eigen::StreamPrecision, 0, ", ", ", ", "", "", "[", "]")) << "[Nm]" << std::endl;
@@ -610,6 +629,7 @@ void ImpedanceController::calcForceMoment ()
           }
         }
       }
+      otd->checkDetection(otd_fmv);
 };
 
 //
@@ -779,6 +799,98 @@ void ImpedanceController::waitImpedanceControllerTransition(std::string i_name_)
       usleep(10);
     }
     return;
+}
+
+//
+// ObjectTurnaroundDetector
+//
+
+void ImpedanceController::startObjectTurnaroundDetection(const double i_ref_diff_wrench, const double i_max_time, const OpenHRP::ImpedanceControllerService::StrSequence& i_ee_names)
+{
+    otd->startDetection(i_ref_diff_wrench, i_max_time);
+    otd_sensor_names.clear();
+    for (size_t i = 0; i < i_ee_names.length(); i++) {
+        otd_sensor_names.push_back(m_impedance_param[std::string(i_ee_names[i])].sensor_name);
+    }
+}
+
+OpenHRP::ImpedanceControllerService::DetectorMode ImpedanceController::checkObjectTurnaroundDetection()
+{
+    OpenHRP::ImpedanceControllerService::DetectorMode tmpmode;
+    switch (otd->getMode()) {
+    case ObjectTurnaroundDetector::MODE_IDLE:
+        tmpmode = ImpedanceControllerService::MODE_DETECTOR_IDLE;
+        break;
+    case ObjectTurnaroundDetector::MODE_STARTED:
+        tmpmode = ImpedanceControllerService::MODE_STARTED;
+        break;
+    case ObjectTurnaroundDetector::MODE_DETECTED:
+        tmpmode = ImpedanceControllerService::MODE_DETECTED;
+        break;
+    case ObjectTurnaroundDetector::MODE_MAX_TIME:
+        tmpmode = ImpedanceControllerService::MODE_MAX_TIME;
+        break;
+    default:
+        tmpmode = ImpedanceControllerService::MODE_DETECTOR_IDLE;
+        break;
+    }
+    return tmpmode;
+}
+
+bool ImpedanceController::setObjectTurnaroundDetectorParam(const OpenHRP::ImpedanceControllerService::objectTurnaroundDetectorParam &i_param_)
+{
+    std::cerr << "[" << m_profile.instance_name << "] setObjectTurnaroundDetectorParam" << std::endl;
+    Guard guard(m_mutex);
+    otd->setWrenchCutoffFreq(i_param_.wrench_cutoff_freq);
+    otd->setDwrenchCutoffFreq(i_param_.dwrench_cutoff_freq);
+    otd->setDetectRatioThre(i_param_.detect_ratio_thre);
+    otd->setStartRatioThre(i_param_.start_ratio_thre);
+    otd->setDetectTimeThre(i_param_.detect_time_thre);
+    otd->setStartTimeThre(i_param_.start_time_thre);
+    hrp::Vector3 tmp;
+    for (size_t i = 0; i < 3; i++) tmp(i) = i_param_.axis[i];
+    otd->setAxis(tmp);
+    otd->printParams();
+    return true;
+};
+
+bool ImpedanceController::getObjectTurnaroundDetectorParam(OpenHRP::ImpedanceControllerService::objectTurnaroundDetectorParam& i_param_)
+{
+    std::cerr << "[" << m_profile.instance_name << "] getObjectTurnaroundDetectorParam" << std::endl;
+    i_param_.wrench_cutoff_freq = otd->getWrenchCutoffFreq();
+    i_param_.dwrench_cutoff_freq = otd->getDwrenchCutoffFreq();
+    i_param_.detect_ratio_thre = otd->getDetectRatioThre();
+    i_param_.start_ratio_thre = otd->getStartRatioThre();
+    i_param_.detect_time_thre = otd->getDetectTimeThre();
+    i_param_.start_time_thre = otd->getStartTimeThre();
+    hrp::Vector3 tmp = otd->getAxis();
+    for (size_t i = 0; i < 3; i++) i_param_.axis[i] = tmp(i);
+    return true;
+}
+
+bool ImpedanceController::getObjectForcesMoments(OpenHRP::ImpedanceControllerService::Dbl3Sequence_out o_forces, OpenHRP::ImpedanceControllerService::Dbl3Sequence_out o_moments)
+{
+    std::cerr << "[" << m_profile.instance_name << "] getObjectForcesMoments" << std::endl;
+    if (otd_sensor_names.size() == 0) return false;
+    hrp::Vector3 tmpv = otd->getAxis() * otd->getFilteredWrench();
+    std::cerr << "[" << m_profile.instance_name << "] getObjectForcesMoments" << std::endl;
+    o_forces = new OpenHRP::ImpedanceControllerService::Dbl3Sequence ();
+    o_moments = new OpenHRP::ImpedanceControllerService::Dbl3Sequence ();
+    o_forces->length(otd_sensor_names.size());
+    o_moments->length(otd_sensor_names.size());
+    std::cerr << "[" << m_profile.instance_name << "] getObjectForcesMoments" << std::endl;
+    for (size_t i = 0; i < o_forces->length(); i++) o_forces[i].length(3);
+    for (size_t i = 0; i < o_moments->length(); i++) o_moments[i].length(3);
+    std::cerr << "[" << m_profile.instance_name << "] getObjectForcesMoments" << std::endl;
+    // Temp
+    for (size_t i = 0; i < otd_sensor_names.size(); i++) {
+        o_forces[i][0] = tmpv(0)/otd_sensor_names.size();
+        o_forces[i][1] = tmpv(1)/otd_sensor_names.size();
+        o_forces[i][2] = tmpv(2)/otd_sensor_names.size();
+        o_moments[i][0] = o_moments[i][1] = o_moments[i][2] = 0.0;
+    }
+    std::cerr << "[" << m_profile.instance_name << "] getObjectForcesMoments" << std::endl;
+    return true;
 }
 
 extern "C"
