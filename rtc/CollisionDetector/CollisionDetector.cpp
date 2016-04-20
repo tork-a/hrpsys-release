@@ -15,14 +15,13 @@
 #include <hrpUtil/Eigen4d.h>
 #include <hrpCollision/ColdetModel.h>
 #ifdef USE_HRPSYSUTIL
-#include "util/GLbody.h"
-#include "util/GLutil.h"
+#include "hrpsys/util/GLbody.h"
+#include "hrpsys/util/GLutil.h"
 #endif // USE_HRPSYSUTIL
-#include "util/BVutil.h"
-#include "RobotHardwareService.hh"
+#include "hrpsys/util/BVutil.h"
+#include "hrpsys/idl/RobotHardwareService.hh"
 
 #include "CollisionDetector.h"
-#include "../SoftErrorLimiter/beep.h"
 
 #define deg2rad(x)	((x)*M_PI/180)
 #define rad2deg(x)      ((x)*180/M_PI)
@@ -54,6 +53,7 @@ CollisionDetector::CollisionDetector(RTC::Manager* manager)
       m_qCurrentIn("qCurrent", m_qCurrent),
       m_servoStateIn("servoStateIn", m_servoState),
       m_qOut("q", m_q),
+      m_beepCommandOut("beepCommand", m_beepCommand),
       m_CollisionDetectorServicePort("CollisionDetectorService"),
       // </rtc-template>
       m_loop_for_check(0),
@@ -71,7 +71,8 @@ CollisionDetector::CollisionDetector(RTC::Manager* manager)
       m_debugLevel(0),
       m_enable(true),
       collision_beep_count(0),
-      dummy(0)
+      dummy(0),
+      is_beep_port_connected(false)
 {
     m_service0.collision(this);
 #ifdef USE_HRPSYSUTIL
@@ -90,7 +91,7 @@ CollisionDetector::~CollisionDetector()
 
 RTC::ReturnCode_t CollisionDetector::onInitialize()
 {
-    std::cout << m_profile.instance_name << ": onInitialize()" << std::endl;
+    std::cerr << "[" << m_profile.instance_name << "] onInitialize()" << std::endl;
     // <rtc-template block="bind_config">
     // Bind variables and configuration variable
     bindParameter("debugLevel", m_debugLevel, "0");
@@ -106,6 +107,7 @@ RTC::ReturnCode_t CollisionDetector::onInitialize()
 
     // Set OutPort buffer
     addOutPort("q", m_qOut);
+    addOutPort("beepCommand", m_beepCommandOut);
   
     // Set service provider to Ports
     m_CollisionDetectorServicePort.registerProvider("service0", "CollisionDetectorService", m_service0);
@@ -146,7 +148,7 @@ RTC::ReturnCode_t CollisionDetector::onInitialize()
     binfo = hrp::loadBodyInfo(prop["model"].c_str(),
 			      CosNaming::NamingContext::_duplicate(naming.getRootContext()));
     if (CORBA::is_nil(binfo)){
-	std::cerr << "failed to load model[" << prop["model"] << "]"
+	std::cerr << "[" << m_profile.instance_name << "] failed to load model[" << prop["model"] << "]"
 		  << std::endl;
 	return RTC::RTC_ERROR;
     }
@@ -155,7 +157,7 @@ RTC::ReturnCode_t CollisionDetector::onInitialize()
 #else
     if (!loadBodyFromBodyInfo(m_robot, binfo, true, hrplinkFactory)) {
 #endif // USE_HRPSYSUTIL
-      std::cerr << "failed to load model[" << prop["model"] << "] in "
+      std::cerr << "[" << m_profile.instance_name << "] failed to load model[" << prop["model"] << "] in "
                 << m_profile.instance_name << std::endl;
       return RTC::RTC_ERROR;
     }
@@ -171,15 +173,15 @@ RTC::ReturnCode_t CollisionDetector::onInitialize()
     setupVClipModel(m_robot);
 
     if ( prop["collision_pair"] != "" ) {
-	std::cerr << "prop[collision_pair] ->" << prop["collision_pair"] << std::endl;
+	std::cerr << "[" << m_profile.instance_name << "] prop[collision_pair] ->" << prop["collision_pair"] << std::endl;
 	std::istringstream iss(prop["collision_pair"]);
 	std::string tmp;
 	while (getline(iss, tmp, ' ')) {
 	    size_t pos = tmp.find_first_of(':');
 	    std::string name1 = tmp.substr(0, pos), name2 = tmp.substr(pos+1);
             if ( m_robot->link(name1)==NULL ) {
-                std::cerr << "CollisionDetector: Could not find robot link " << name1 << std::endl;
-		std::cerr << " please choose one of following :";
+                std::cerr << "[" << m_profile.instance_name << "] Could not find robot link " << name1 << std::endl;
+		std::cerr << "[" << m_profile.instance_name << "] please choose one of following :";
 		for (int i=0; i < m_robot->numLinks(); i++) {
 		  std::cerr << " " << m_robot->link(i)->name;
 		}
@@ -187,15 +189,15 @@ RTC::ReturnCode_t CollisionDetector::onInitialize()
                 continue;
             }
             if ( m_robot->link(name2)==NULL ) {
-                std::cerr << "Could not find robot link " << name2 << std::endl;
-		std::cerr << " please choose one of following :";
+                std::cerr << "[" << m_profile.instance_name << "] Could not find robot link " << name2 << std::endl;
+		std::cerr << "[" << m_profile.instance_name << "] please choose one of following :";
 		for (int i=0; i < m_robot->numLinks(); i++) {
 		  std::cerr << " " << m_robot->link(i)->name;
 		}
 		std::cerr << std::endl;
                 continue;
             }
-	    std::cerr << "check collisions between " << m_robot->link(name1)->name << " and " <<  m_robot->link(name2)->name << std::endl;
+	    std::cerr << "[" << m_profile.instance_name << "] check collisions between " << m_robot->link(name1)->name << " and " <<  m_robot->link(name2)->name << std::endl;
 	    m_pair[tmp] = new CollisionLinkPair(new VclipLinkPair(m_robot->link(name1), m_VclipLinks[m_robot->link(name1)->index],
                                                                   m_robot->link(name2), m_VclipLinks[m_robot->link(name2)->index], 0));
 	}
@@ -203,7 +205,7 @@ RTC::ReturnCode_t CollisionDetector::onInitialize()
 
     if ( prop["collision_loop"] != "" ) {
         coil::stringTo(m_collision_loop, prop["collision_loop"].c_str());
-        std::cerr << "set collision_loop: " << m_collision_loop << std::endl;
+        std::cerr << "[" << m_profile.instance_name << "] set collision_loop: " << m_collision_loop << std::endl;
     }
 #ifdef USE_HRPSYSUTIL
     if ( m_use_viewer ) {
@@ -219,25 +221,25 @@ RTC::ReturnCode_t CollisionDetector::onInitialize()
     m_init_collision_mask.resize(m_robot->numJoints()); // collision_mask defined in .conf as [collisoin_mask] 0: move even if collide, 1: do not move when collide
     std::fill(m_init_collision_mask.begin(), m_init_collision_mask.end(), 1);
     if ( prop["collision_mask"] != "" ) {
-	std::cerr << "[co] prop[collision_mask] ->" << prop["collision_mask"] << std::endl;
+	std::cerr << "[" << m_profile.instance_name << "] prop[collision_mask] ->" << prop["collision_mask"] << std::endl;
         coil::vstring mask_str = coil::split(prop["collision_mask"], ",");
         if (mask_str.size() == m_robot->numJoints()) {
             for (size_t i = 0; i < m_robot->numJoints(); i++) {coil::stringTo(m_init_collision_mask[i], mask_str[i].c_str()); }
             for (size_t i = 0; i < m_robot->numJoints(); i++) {
                 if ( m_init_collision_mask[i] == 0 ) {
-                    std::cerr << "[co] CollisionDetector will not control " << m_robot->joint(i)->name << std::endl;
+                    std::cerr << "[" << m_profile.instance_name << "] CollisionDetector will not control " << m_robot->joint(i)->name << std::endl;
                 }
             }
         }else{
-            std::cerr << "[co] ERROR size of collision_mask is differ from robot joint number .. " << mask_str.size()  << ", " << m_robot->numJoints() << std::endl;
+            std::cerr << "[" << m_profile.instance_name << "] ERROR size of collision_mask is differ from robot joint number .. " << mask_str.size()  << ", " << m_robot->numJoints() << std::endl;
         }
     }
 
     if ( prop["use_limb_collision"] != "" ) {
-        std::cerr << "[co] prop[use_limb_collision] -> " << prop["use_limb_collision"] << std::endl;
+        std::cerr << "[" << m_profile.instance_name << "] prop[use_limb_collision] -> " << prop["use_limb_collision"] << std::endl;
         if ( prop["use_limb_collision"] == "true" ) {
             m_use_limb_collision = true;
-            std::cerr << "[co] Enable use_limb_collision" << std::endl;
+            std::cerr << "[" << m_profile.instance_name << "] Enable use_limb_collision" << std::endl;
         }
     }
 
@@ -275,6 +277,7 @@ RTC::ReturnCode_t CollisionDetector::onInitialize()
     }
 
     collision_beep_freq = static_cast<int>(1.0/(3.0*m_dt)); // 3 times / 1[s]
+    m_beepCommand.data.length(bc.get_num_beep_info());
     return RTC::RTC_OK;
 }
 
@@ -305,14 +308,14 @@ RTC::ReturnCode_t CollisionDetector::onFinalize()
 
 RTC::ReturnCode_t CollisionDetector::onActivated(RTC::UniqueId ec_id)
 {
-    std::cout << m_profile.instance_name<< ": onActivated(" << ec_id << ")" << std::endl;
+    std::cerr << "[" << m_profile.instance_name<< "] onActivated(" << ec_id << ")" << std::endl;
     m_have_safe_posture = false;
     return RTC::RTC_OK;
 }
 
 RTC::ReturnCode_t CollisionDetector::onDeactivated(RTC::UniqueId ec_id)
 {
-    std::cout << m_profile.instance_name<< ": onDeactivated(" << ec_id << ")" << std::endl;
+    std::cerr << "[" << m_profile.instance_name<< "] onDeactivated(" << ec_id << ")" << std::endl;
     return RTC::RTC_OK;
 }
 
@@ -321,18 +324,30 @@ RTC::ReturnCode_t CollisionDetector::onExecute(RTC::UniqueId ec_id)
 {
     static int loop = 0;
     loop++;
+
+    // Connection check of m_beepCommand to BeeperRTC
+    //   If m_beepCommand is not connected to BeeperRTC and sometimes, check connection.
+    //   If once connection is found, never check connection.
+    if (!is_beep_port_connected && (loop % 500 == 0) ) {
+      if ( m_beepCommandOut.connectors().size() > 0 ) {
+        is_beep_port_connected = true;
+        std::cerr << "[" << m_profile.instance_name<< "] beepCommand data port connection found! Use BeeperRTC." << std::endl;
+      }
+    }
+
     if (m_servoStateIn.isNew()) {
         m_servoStateIn.read();
     }
     if ( ! m_enable ) {
         if ( DEBUGP || loop % 100 == 1) {
-            std::cerr << "CAUTION!! The robot is moving without checking self collision detection!!! please send enableCollisionDetection to CollisoinDetection RTC" << std::endl;
+            std::cerr << "[" << m_profile.instance_name << "] CAUTION!! The robot is moving without checking self collision detection!!! please send enableCollisionDetection to CollisoinDetection RTC" << std::endl;
         }
         if ( m_qRefIn.isNew()) {
             m_qRefIn.read();
             for ( int i = 0; i < m_q.data.length(); i++ ) {
                 m_q.data[i] = m_qRef.data[i];
             }
+            m_q.tm = m_qRef.tm;
             m_qOut.write();
         }
     }
@@ -404,7 +419,7 @@ RTC::ReturnCode_t CollisionDetector::onExecute(RTC::UniqueId ec_id)
                     m_safe_posture = false;
                     if ( loop%200==0 || last_safe_posture ) {
                         hrp::JointPathPtr jointPath = m_robot->getJointPath(p->link(0),p->link(1));
-                        std::cerr << i << "/" << m_pair.size() << " pair: " << p->link(0)->name << "/" << p->link(1)->name << "(" << jointPath->numJoints() << "), distance = " << c->distance << std::endl;
+                        std::cerr << "[" << m_profile.instance_name << "] " << i << "/" << m_pair.size() << " pair: " << p->link(0)->name << "/" << p->link(1)->name << "(" << jointPath->numJoints() << "), distance = " << c->distance << std::endl;
                     }
                     m_link_collision[p->link(0)->index] = true;
                     m_link_collision[p->link(1)->index] = true;
@@ -448,7 +463,7 @@ RTC::ReturnCode_t CollisionDetector::onExecute(RTC::UniqueId ec_id)
             }
             if ( m_use_limb_collision ) {
                if ( loop%200==0 and ! m_safe_posture ) {
-                   std::cerr << "collision_mask : ";
+                   std::cerr << "[" << m_profile.instance_name << "] collision_mask : ";
                     for (size_t i = 0; i < m_robot->numJoints(); i++) {
                         std::cerr << m_robot->joint(i)->name << ":"  << m_curr_collision_mask[i] << " ";
                     }
@@ -501,21 +516,22 @@ RTC::ReturnCode_t CollisionDetector::onExecute(RTC::UniqueId ec_id)
 #endif
         }
         if ( DEBUGP ) {
-          std::cerr << "check collisions for " << m_pair.size() << " pairs in " << (tm2.sec()-tm1.sec())*1000+(tm2.usec()-tm1.usec())/1000.0 
+          std::cerr << "[" << m_profile.instance_name << "] check collisions for " << m_pair.size() << " pairs in " << (tm2.sec()-tm1.sec())*1000+(tm2.usec()-tm1.usec())/1000.0 
                     << " [msec], safe = " << m_safe_posture << ", time = " << m_recover_time*m_dt << "[s], loop = " << m_loop_for_check << "/" << m_collision_loop << std::endl;
         }
         if ( m_pair.size() == 0 && ( DEBUGP || (loop % ((int)(5/m_dt))) == 1) ) {
-            std::cerr << "CAUTION!! The robot is moving without checking self collision detection!!! please define collision_pair in configuration file" << std::endl;
+            std::cerr << "[" << m_profile.instance_name << "] CAUTION!! The robot is moving without checking self collision detection!!! please define collision_pair in configuration file" << std::endl;
         }
         if ( ! m_have_safe_posture && ! m_safe_posture ) {
             if ( DEBUGP || (loop % ((int)(5/m_dt))) == 1) {
-                std::cerr << "CAUTION!! The robot is moving while collision detection!!!, since we do not get safe_posture yet" << std::endl;
+                std::cerr << "[" << m_profile.instance_name << "] CAUTION!! The robot is moving while collision detection!!!, since we do not get safe_posture yet" << std::endl;
             }
             for ( int i = 0; i < m_q.data.length(); i++ ) {
                 m_lastsafe_jointdata[i] = m_recover_jointdata[i] = m_q.data[i] = m_qRef.data[i];
             }
         }
         //
+        m_q.tm = m_qRef.tm;
         m_qOut.write();
 
         // beep sound for collision alert
@@ -531,10 +547,16 @@ RTC::ReturnCode_t CollisionDetector::onExecute(RTC::UniqueId ec_id)
         }
         //  beep
         if ( !m_safe_posture && has_servoOn ) { // If collided and some joint is servoOn
-          if ( collision_beep_count % collision_beep_freq == 0 && collision_beep_count % (collision_beep_freq * 3) != 0 ) start_beep(2352, collision_beep_freq*0.7);
-          else stop_beep();
+          if (is_beep_port_connected) {
+            if ( collision_beep_count % collision_beep_freq == 0 && collision_beep_count % (collision_beep_freq * 3) != 0 ) bc.startBeep(2352, collision_beep_freq*0.7);
+            else bc.stopBeep();
+          } else {
+            if ( collision_beep_count % collision_beep_freq == 0 && collision_beep_count % (collision_beep_freq * 3) != 0 ) start_beep(2352, collision_beep_freq*0.7);
+            else stop_beep();
+          }
           collision_beep_count++;
         } else {
+          if (is_beep_port_connected) bc.stopBeep();
           collision_beep_count = 0;
         }
 
@@ -577,6 +599,10 @@ RTC::ReturnCode_t CollisionDetector::onExecute(RTC::UniqueId ec_id)
         m_state.safe_posture = m_safe_posture;
         m_state.recover_time = m_recover_time;
         m_state.loop_for_check = m_loop_for_check;
+    }
+    if (is_beep_port_connected) {
+      bc.setDataPort(m_beepCommand);
+      if (bc.isWritable()) m_beepCommandOut.write();
     }
 #ifdef USE_HRPSYSUTIL
     if ( m_use_viewer ) m_window.oneStep();
@@ -661,12 +687,12 @@ bool CollisionDetector::checkIsSafeTransition(void)
 bool CollisionDetector::enable(void)
 {
     if (m_enable){
-        std::cerr << "CollisionDetector is already enabled." << std::endl;
+        std::cerr << "[" << m_profile.instance_name << "] CollisionDetector is already enabled." << std::endl;
         return true;
     }
 
     if (!checkIsSafeTransition()){
-        std::cerr << "CollisionDetector cannot be enabled because of different reference joint angle" << std::endl;
+        std::cerr << "[" << m_profile.instance_name << "] CollisionDetector cannot be enabled because of different reference joint angle" << std::endl;
         return false;
     }
 
@@ -682,12 +708,12 @@ bool CollisionDetector::enable(void)
         c->distance = c->pair->computeDistance(c->point0.data(), c->point1.data());
         if ( c->distance <= c->pair->getTolerance() ) {
             hrp::JointPathPtr jointPath = m_robot->getJointPath(p->link(0),p->link(1));
-            std::cerr << "CollisionDetector cannot be enabled because of collision" << std::endl;
-            std::cerr << i << "/" << m_pair.size() << " pair: " << p->link(0)->name << "/" << p->link(1)->name << "(" << jointPath->numJoints() << "), distance = " << c->distance << std::endl;
+            std::cerr << "[" << m_profile.instance_name << "] CollisionDetector cannot be enabled because of collision" << std::endl;
+            std::cerr << "[" << m_profile.instance_name << "] " << i << "/" << m_pair.size() << " pair: " << p->link(0)->name << "/" << p->link(1)->name << "(" << jointPath->numJoints() << "), distance = " << c->distance << std::endl;
             return false;
         }
     }
-    std::cerr << "CollisionDetector is successfully enabled." << std::endl;
+    std::cerr << "[" << m_profile.instance_name << "] CollisionDetector is successfully enabled." << std::endl;
 
     m_safe_posture = true;
     m_recover_time = 0;
@@ -699,10 +725,10 @@ bool CollisionDetector::enable(void)
 bool CollisionDetector::disable(void)
 {
     if (!checkIsSafeTransition()){
-        std::cerr << "CollisionDetector cannot be disabled because of different reference joint angle" << std::endl;
+        std::cerr << "[" << m_profile.instance_name << "] CollisionDetector cannot be disabled because of different reference joint angle" << std::endl;
         return false;
     }
-    std::cerr << "CollisionDetector is successfully disabled." << std::endl;
+    std::cerr << "[" << m_profile.instance_name << "] CollisionDetector is successfully disabled." << std::endl;
     m_enable = false;
     return true;
 }
