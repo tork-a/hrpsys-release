@@ -11,7 +11,7 @@
 #include <hrpModel/Link.h>
 #include <hrpModel/ModelLoaderUtil.h>
 #include "SequencePlayer.h"
-#include "util/VectorConvert.h"
+#include "hrpsys/util/VectorConvert.h"
 #include <hrpModel/JointPath.h>
 #include <hrpUtil/MatrixSolvers.h>
 #include "../ImpedanceController/JointPathEx.h"
@@ -55,7 +55,6 @@ SequencePlayer::SequencePlayer(RTC::Manager* manager)
       m_optionalDataOut("optionalData", m_optionalData),
       m_SequencePlayerServicePort("SequencePlayerService"),
       // </rtc-template>
-      m_waitSem(0),
       m_robot(hrp::BodyPtr()),
       m_debugLevel(0),
       m_error_pos(0.0001),
@@ -63,6 +62,7 @@ SequencePlayer::SequencePlayer(RTC::Manager* manager)
       m_iteration(50),
       dummy(0)
 {
+    sem_init(&m_waitSem, 0, 0);
     m_service0.player(this);
     m_clearFlag = false;
     m_waitFlag = false;
@@ -232,14 +232,14 @@ RTC::ReturnCode_t SequencePlayer::onExecute(RTC::UniqueId ec_id)
         if (m_waitFlag){
             m_gname = "";
             m_waitFlag = false;
-            m_waitSem.post();
+            sem_post(&m_waitSem);
         }
     }
     if (m_seq->isEmpty()){
         m_clearFlag = false;
         if (m_waitFlag){
             m_waitFlag = false;
-            m_waitSem.post();
+            sem_post(&m_waitSem);
         }
     }else{
 	Guard guard(m_mutex);
@@ -335,7 +335,7 @@ void SequencePlayer::waitInterpolation()
         std::cerr << __PRETTY_FUNCTION__ << std::endl;
     }
     m_waitFlag = true;
-    m_waitSem.wait();
+    sem_wait(&m_waitSem);
 }
 
 bool SequencePlayer::waitInterpolationOfGroup(const char *gname)
@@ -345,7 +345,7 @@ bool SequencePlayer::waitInterpolationOfGroup(const char *gname)
     }
     m_gname = gname;
     m_waitFlag = true;
-    m_waitSem.wait();
+    sem_wait(&m_waitSem);
     return true;
 }
 
@@ -494,15 +494,15 @@ bool SequencePlayer::setJointAnglesSequenceFull(const OpenHRP::dSequenceSequence
     int len = i_jvss.length();
     std::vector<const double*> v_jvss, v_vels, v_torques, v_poss, v_rpys, v_accs, v_zmps, v_wrenches, v_optionals;
     std::vector<double> v_tms;
-    for ( int i = 0; i < i_jvss.length(); i++ ) v_poss.push_back(i_jvss[i].get_buffer());
-    for ( int i = 0; i < i_vels.length(); i++ ) v_poss.push_back(i_vels[i].get_buffer());
-    for ( int i = 0; i < i_torques.length(); i++ ) v_poss.push_back(i_torques[i].get_buffer());
+    for ( int i = 0; i < i_jvss.length(); i++ ) v_jvss.push_back(i_jvss[i].get_buffer());
+    for ( int i = 0; i < i_vels.length(); i++ ) v_vels.push_back(i_vels[i].get_buffer());
+    for ( int i = 0; i < i_torques.length(); i++ ) v_torques.push_back(i_torques[i].get_buffer());
     for ( int i = 0; i < i_poss.length(); i++ ) v_poss.push_back(i_poss[i].get_buffer());
-    for ( int i = 0; i < i_rpys.length(); i++ ) v_poss.push_back(i_rpys[i].get_buffer());
-    for ( int i = 0; i < i_accs.length(); i++ ) v_poss.push_back(i_accs[i].get_buffer());
-    for ( int i = 0; i < i_zmps.length(); i++ ) v_poss.push_back(i_zmps[i].get_buffer());
-    for ( int i = 0; i < i_wrenches.length(); i++ ) v_poss.push_back(i_wrenches[i].get_buffer());
-    for ( int i = 0; i < i_optionals.length(); i++ ) v_poss.push_back(i_optionals[i].get_buffer());
+    for ( int i = 0; i < i_rpys.length(); i++ ) v_rpys.push_back(i_rpys[i].get_buffer());
+    for ( int i = 0; i < i_accs.length(); i++ ) v_accs.push_back(i_accs[i].get_buffer());
+    for ( int i = 0; i < i_zmps.length(); i++ ) v_zmps.push_back(i_zmps[i].get_buffer());
+    for ( int i = 0; i < i_wrenches.length(); i++ ) v_wrenches.push_back(i_wrenches[i].get_buffer());
+    for ( int i = 0; i < i_optionals.length(); i++ ) v_optionals.push_back(i_optionals[i].get_buffer());
     for ( int i = 0; i < i_tms.length();  i++ )  v_tms.push_back(i_tms[i]);
     return m_seq->setJointAnglesSequenceFull(v_jvss, v_vels, v_torques, v_poss, v_rpys, v_accs, v_zmps, v_wrenches, v_optionals, v_tms);
 }
@@ -570,7 +570,7 @@ bool SequencePlayer::setTargetPose(const char* gname, const double *xyz, const d
     string base_parent_name = m_robot->joint(indices[0])->parent->name;
     string target_name = m_robot->joint(indices[indices.size()-1])->name;
     // prepare joint path
-    hrp::JointPathExPtr manip = hrp::JointPathExPtr(new hrp::JointPathEx(m_robot, m_robot->link(base_parent_name), m_robot->link(target_name), dt));
+    hrp::JointPathExPtr manip = hrp::JointPathExPtr(new hrp::JointPathEx(m_robot, m_robot->link(base_parent_name), m_robot->link(target_name), dt, true, std::string(m_profile.instance_name)));
 
     // calc fk
     for (int i=0; i<m_robot->numJoints(); i++){

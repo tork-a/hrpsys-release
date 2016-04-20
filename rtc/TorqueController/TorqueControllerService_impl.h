@@ -2,7 +2,7 @@
 #ifndef __NULL_SERVICE_H__
 #define __NULL_SERVICE_H__
 
-#include "TorqueControllerService.hh"
+#include "hrpsys/idl/TorqueControllerService.hh"
 
 using namespace OpenHRP;
 
@@ -27,7 +27,8 @@ public:
 	CORBA::Boolean stopMultipleTorqueControls(const OpenHRP::TorqueControllerService::StrSequence& jnames);
 	CORBA::Boolean setReferenceTorque(const char *jointName, double tauRef);
 	CORBA::Boolean setMultipleReferenceTorques(const OpenHRP::TorqueControllerService::StrSequence& jnames, const OpenHRP::TorqueControllerService::dSequence& tauRefs);
-	CORBA::Boolean setTorqueControllerParam(const OpenHRP::TorqueControllerService::torqueControllerParam& t_param);
+	CORBA::Boolean setTorqueControllerParam(const char *jointName, const OpenHRP::TorqueControllerService::torqueControllerParam& i_param);
+	CORBA::Boolean getTorqueControllerParam(const char *jointName, OpenHRP::TorqueControllerService::torqueControllerParam& i_param);
 	
 	void torque_controller(TorqueController *i_torque_controller);
 private:
