@@ -247,6 +247,16 @@ class HrpsysConfigurator:
     log_version = None
     log_use_owned_ec = False
 
+    # Beeper
+    bp = None
+    bp_svc = None
+    bp_version = None
+
+    # ReferenceForceUpdater
+    rfu = None
+    rfu_svc = None
+    rfu_version = None
+
     # rtm manager
     ms = None
 
@@ -382,28 +392,33 @@ class HrpsysConfigurator:
 
         # ref force moment connection
         for sen in self.getForceSensorNames():
-            if self.st:
+            if self.abc and self.st:
                 connectPorts(self.abc.port(sen),
                              self.st.port(sen + "Ref"))
-            if self.es:
-                connectPorts(self.sh.port(sen+"Out"),
-                                 self.es.port(sen+"In"))
-                if self.ic:
-                    connectPorts(self.es.port(sen+"Out"),
-                                 self.ic.port("ref_" + sen+"In"))
-                if self.abc:
-                    connectPorts(self.es.port(sen+"Out"),
-                                 self.abc.port("ref_" + sen))
-            else:
-                if self.ic:
-                    connectPorts(self.sh.port(sen+"Out"),
-                                 self.ic.port("ref_" + sen+"In"))
-                if self.abc:
-                    connectPorts(self.sh.port(sen+"Out"),
-                                 self.abc.port("ref_" + sen))
-            if self.abc and self.st:
                 connectPorts(self.abc.port("limbCOPOffset_"+sen),
                              self.st.port("limbCOPOffset_"+sen))
+            if self.rfu:
+                ref_force_port_from = self.rfu.port("ref_"+sen+"Out")
+            elif self.es:
+                ref_force_port_from = self.es.port(sen+"Out")
+            else:
+                ref_force_port_from = self.sh.port(sen+"Out")
+            if self.ic:
+                connectPorts(ref_force_port_from,
+                             self.ic.port("ref_" + sen+"In"))
+            if self.abc:
+                connectPorts(ref_force_port_from,
+                             self.abc.port("ref_" + sen))
+            if self.es:
+                connectPorts(self.sh.port(sen+"Out"),
+                             self.es.port(sen+"In"))
+                if self.rfu:
+                    connectPorts(self.es.port(sen+"Out"),
+                                 self.rfu.port("ref_" + sen+"In"))
+            else:
+                if self.rfu:
+                    connectPorts(self.sh.port(sen+"Out"),
+                                 self.rfu.port("ref_" + sen+"In"))
 
         #  actual force sensors
         if self.rmfo:
@@ -416,6 +431,9 @@ class HrpsysConfigurator:
                 if self.ic:
                     connectPorts(self.rmfo.port("off_" + sen.name),
                                  self.ic.port(sen.name))
+                if self.rfu:
+                    connectPorts(self.rmfo.port("off_" + sen.name),
+                                 self.rfu.port(sen.name))
                 if self.st:
                     connectPorts(self.rmfo.port("off_" + sen.name),
                                  self.st.port(sen.name))
@@ -430,6 +448,13 @@ class HrpsysConfigurator:
             if self.seq_version >= '315.3.0':
                 connectPorts(self.sh.port("basePosOut"), self.ic.port("basePosIn"))
                 connectPorts(self.sh.port("baseRpyOut"), self.ic.port("baseRpyIn"))
+        # connection for rfu
+        if self.rfu:
+            if self.es:
+                connectPorts(self.es.port("q"), self.rfu.port("qRef"))
+            if self.seq_version >= '315.3.0':
+                connectPorts(self.sh.port("basePosOut"), self.rfu.port("basePosIn"))
+                connectPorts(self.sh.port("baseRpyOut"), self.rfu.port("baseRpyIn"))
         # connection for tf
         if self.tf:
             # connection for actual torques
@@ -495,6 +520,16 @@ class HrpsysConfigurator:
         # connection for co
         if self.es:
             connectPorts(self.rh.port("servoState"), self.es.port("servoStateIn"))
+
+        if self.bp:
+            if self.tl:
+                connectPorts(self.tl.port("beepCommand"), self.bp.port("beepCommand"))
+            if self.es:
+                connectPorts(self.es.port("beepCommand"), self.bp.port("beepCommand"))
+            if self.el:
+                connectPorts(self.el.port("beepCommand"), self.bp.port("beepCommand"))
+            if self.co:
+                connectPorts(self.co.port("beepCommand"), self.bp.port("beepCommand"))
 
     def activateComps(self):
         '''!@brief
@@ -670,15 +705,17 @@ class HrpsysConfigurator:
             ['vs', "VirtualForceSensor"],
             ['rmfo', "RemoveForceSensorLinkOffset"],
             ['es', "EmergencyStopper"],
+            ['rfu', "ReferenceForceUpdater"],
             ['ic', "ImpedanceController"],
             ['abc', "AutoBalancer"],
             ['st', "Stabilizer"],
             ['co', "CollisionDetector"],
             ['tc', "TorqueController"],
             ['te', "ThermoEstimator"],
-            ['tl', "ThermoLimiter"],
             ['hes', "EmergencyStopper"],
             ['el', "SoftErrorLimiter"],
+            ['tl', "ThermoLimiter"],
+            ['bp', "Beeper"],
             ['log', "DataLogger"]
             ]
 
@@ -1997,7 +2034,6 @@ dr=0, dp=0, dw=0, tm=10, wait=True):
         Start default unstable RTCs controller mode.
         Currently Stabilzier, AutoBalancer, and ImpedanceController are started.
         '''
-        self.startStabilizer()
         for limb in ic_limbs:
             self.ic_svc.startImpedanceControllerNoWait(limb)
         if abc_limbs==None:
@@ -2006,6 +2042,7 @@ dr=0, dp=0, dw=0, tm=10, wait=True):
             else:
                 abc_limbs=["rleg", "lleg"]
         self.startAutoBalancer(abc_limbs)
+        self.startStabilizer()
         for limb in ic_limbs:
             self.ic_svc.waitImpedanceControllerTransition(limb)
 
