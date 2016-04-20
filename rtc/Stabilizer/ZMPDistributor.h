@@ -85,6 +85,7 @@ public:
     };
     inline bool is_inside_support_polygon (Eigen::Vector2d& p, const std::vector<hrp::Vector3>& ee_pos, const std::vector <hrp::Matrix33>& ee_rot, const std::vector<std::string>& ee_name, const leg_type& support_leg, const std::vector<double>& tmp_margin = std::vector<double>(), const hrp::Vector3& offset = hrp::Vector3(0.0, 0.0, 0.0))
     {
+      if (ee_pos.size() == 0 || ee_rot.size() == 0 || ee_name.size() == 0 ) return true;
       size_t l_idx, r_idx;
       for (size_t i = 0; i < ee_name.size(); i++) {
         if (ee_name[i]=="rleg") r_idx = i;
@@ -579,6 +580,7 @@ public:
         // QP
         double norm_weight = 1e-7;
         double cop_weight = 1e-3;
+        double ref_force_weight = 0;// 1e-3;
         hrp::dvector total_fm(3);
         total_fm(0) = total_fz;
         total_fm(1) = 0;
@@ -593,6 +595,7 @@ public:
         double alpha_thre = 1e-20;
         // fz_alpha inversion for weighing matrix
         for (size_t i = 0; i < fz_alpha_vector.size(); i++) {
+            fz_alpha_vector[i] *= limb_gains[i];
             fz_alpha_vector[i] = (fz_alpha_vector[i] < alpha_thre) ? 1/alpha_thre : 1/fz_alpha_vector[i];
         }
         for (size_t j = 0; j < fz_alpha_vector.size(); j++) {
@@ -630,7 +633,8 @@ public:
                 for (size_t i = 0; i < state_dim_one; i++) {
                     Kmat(j,i+j*state_dim_one) = 1.0;
                 }
-                reff(j) = total_fz/2.0;
+                reff(j) = ref_foot_force[j](2);// total_fz/2.0;
+                KW(j,j) = ref_force_weight;
             }
             Hmat += Kmat.transpose() * KW * Kmat;
             gvec += -1 * Kmat.transpose() * KW * reff;

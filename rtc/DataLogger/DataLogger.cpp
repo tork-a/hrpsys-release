@@ -8,8 +8,8 @@
  */
 
 #include "DataLogger.h"
-#include "util/Hrpsys.h"
-#include "pointcloud.hh"
+#include "hrpsys/util/Hrpsys.h"
+#include "hrpsys/idl/pointcloud.hh"
 
 
 typedef coil::Guard<coil::Mutex> Guard;
@@ -180,7 +180,7 @@ DataLogger::~DataLogger()
 
 RTC::ReturnCode_t DataLogger::onInitialize()
 {
-  std::cout << m_profile.instance_name << ": onInitialize()" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "] onInitialize()" << std::endl;
   // Registration: InPort/OutPort/Service
   // <rtc-template block="registration">
   // Set InPort buffers
