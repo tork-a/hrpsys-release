@@ -43,9 +43,9 @@ def demo ():
     init()
     if hrpsys_version >= '315.5.0':
         demoTestAllLimitTables()
-    demoPositionLimit()
-    demoVelocityLimit()
-    demoErrorLimit()
+        demoPositionLimit()
+        demoVelocityLimit()
+        demoErrorLimit()
 
 def demoTestAllLimitTables():
     print >> sys.stderr, "1. demo all jointLimitTables"
@@ -101,14 +101,20 @@ def testOneLimitTable (self_jointId, target_jointId, limit_table, target_llimit,
             hcf.seq_svc.setJointAngles(tmp_pose, 0.01);
         hcf.seq_svc.waitInterpolation()
         # A-2. check joint limit is not violated
-        el_out1 = rtm.readDataPort(hcf.el.port("q")).data
+        #   Dummy setJointAngles to wait for command joint angles are static
+        hcf.seq_svc.setJointAngles(tmp_pose, 0.01);hcf.seq_svc.waitInterpolation();
+        #   Use RobotHardware's command as SoftErrorLimiter joint angle output
+        el_out1 = hcf.getActualState().command
         ret1 = abs(rad2deg(el_out1[self_jointId])-limit_table[idx]) < thre and abs(rad2deg(el_out1[target_jointId])- (target_llimit + idx)) < thre
         # B-1. set violated joint
         tmp_pose[self_jointId]=deg2rad(limit_table[idx]+angle_violation);
         hcf.seq_svc.setJointAngles(tmp_pose, 0.01);
         hcf.seq_svc.waitInterpolation()
         # B-2. check joint limit is not violated
-        el_out2=rtm.readDataPort(hcf.el.port("q")).data
+        #   Dummy setJointAngles to wait for command joint angles are static
+        hcf.seq_svc.setJointAngles(tmp_pose, 0.01);hcf.seq_svc.waitInterpolation()
+        #   Use RobotHardware's command as SoftErrorLimiter joint angle output
+        el_out2 = hcf.getActualState().command
         ret2 = abs(rad2deg(el_out2[self_jointId]) - limit_table[int(round(rad2deg(el_out2[target_jointId])-target_llimit))]) < thre # Check self and target is on limit table
         ret2 = ret2 and abs(el_out2[self_jointId] - (limit_table[idx]+angle_violation)) > thre # Check result value is not violated value
         # C. results
@@ -128,14 +134,22 @@ def setAndCheckJointLimit (joint_name):
     link_info=filter(lambda x : x.name==joint_name, bodyinfo._get_links())[0]
     hcf.seq_svc.setJointAngle(joint_name, math.radians(1)+link_info.ulimit[0], 1)
     hcf.waitInterpolation()
-    ret = rtm.readDataPort(hcf.el.port("q")).data[link_info.jointId] <= link_info.ulimit[0]
-    print >> sys.stderr, "    ulimit = ", ret, "(elout=", rtm.readDataPort(hcf.el.port("q")).data[link_info.jointId], ", limit=", link_info.ulimit[0], ")"
+    #   Dummy setJointAngles to wait for command joint angles are static
+    hcf.seq_svc.setJointAngle(joint_name, math.radians(1)+link_info.ulimit[0], 0.01);hcf.waitInterpolation()
+    #   Use RobotHardware's command as SoftErrorLimiter joint angle output
+    tmppose = hcf.getActualState().command
+    ret = tmppose[link_info.jointId] <= link_info.ulimit[0]
+    print >> sys.stderr, "    ulimit = ", ret, "(elout=", tmppose[link_info.jointId], ", limit=", link_info.ulimit[0], ")"
     assert(ret)
     # llimit check
     hcf.seq_svc.setJointAngle(joint_name, math.radians(-1)+link_info.llimit[0], 1)
     hcf.waitInterpolation()
-    ret = rtm.readDataPort(hcf.el.port("q")).data[link_info.jointId] >= link_info.llimit[0]
-    print >> sys.stderr, "    llimit = ", ret, "(elout=", rtm.readDataPort(hcf.el.port("q")).data[link_info.jointId], ", limit=", link_info.llimit[0], ")"
+    #   Dummy setJointAngles to wait for command joint angles are static
+    hcf.seq_svc.setJointAngle(joint_name, math.radians(-1)+link_info.llimit[0], 0.01);hcf.waitInterpolation()
+    #   Use RobotHardware's command as SoftErrorLimiter joint angle output
+    tmppose = hcf.getActualState().command
+    ret = tmppose[link_info.jointId] >= link_info.llimit[0]
+    print >> sys.stderr, "    llimit = ", ret, "(elout=", tmppose[link_info.jointId], ", limit=", link_info.llimit[0], ")"
     assert(ret)
     # go to initial
     hcf.seq_svc.setJointAngles(initial_pose, 1.0)
@@ -168,9 +182,12 @@ def setAndCheckJointVelocityLimit (joint_name, thre=1e-5, dt=0.002):
         hcf.waitInterpolation()
         hcf.setJointAngle(joint_name, target_angle, wait_time) # Wait for finishing of joint motion
         hcf.waitInterpolation()
+        #   Dummy setJointAngles to wait for command joint angles are static
+        hcf.setJointAngle(joint_name, target_angle, 0.01);hcf.waitInterpolation()
         hcf.saveLog("/tmp/test-samplerobot-el-vel-check")
         # Check whether joint angle is reached
-        reach_angle = math.degrees(rtm.readDataPort(hcf.el.port("q")).data[link_info.jointId])
+        #   Use RobotHardware's command as SoftErrorLimiter joint angle output
+        reach_angle = math.degrees(hcf.getActualState().command[link_info.jointId])
         is_reached = abs(reach_angle - target_angle) < thre
         # Check actual velocity from Datalogger log
         poslist=[]
@@ -198,36 +215,42 @@ def setAndCheckJointErrorLimit (joint_name, thre=1e-5):
     for is_upper_limit in [True, False]: # uvlimit or lvlimit
         print >> sys.stderr, "  ", joint_name, ", uvlimit" if is_upper_limit else ", lvlimit"
         # Disable error limit for checking vel limit
-        error_limit = 1.0 if is_upper_limit else -1.0 # [deg]
-        hcf.el_svc.setServoErrorLimit("all", abs(math.radians(error_limit)))
+        error_limit = 0.002 if is_upper_limit else -0.002 # [rad]
+        hcf.el_svc.setServoErrorLimit("all", abs(error_limit))
         # Test motion and logging
         hcf.clearLog()
         target_angle = 3.0 if is_upper_limit else -3.0 # [deg]
-        wait_time = abs(target_angle/error_limit * 1.1) # 1.1 is margin
+        wait_time = 0.2
         hcf.setJointAngle(joint_name, math.degrees(initial_pose[link_info.jointId]), 0.1)
         hcf.waitInterpolation()
         hcf.setJointAngle(joint_name, target_angle, 0.002)
         hcf.waitInterpolation()
         hcf.setJointAngle(joint_name, target_angle, wait_time) # Wait for finishing of joint motion
         hcf.waitInterpolation()
+        #   Dummy setJointAngles to wait for command joint angles are static
+        hcf.setJointAngle(joint_name, target_angle, 0.01);hcf.waitInterpolation()
         hcf.saveLog("/tmp/test-samplerobot-el-err-check")
         # Check whether joint angle is reached
-        reach_angle = math.degrees(rtm.readDataPort(hcf.el.port("q")).data[link_info.jointId])
+        #   Use RobotHardware's command as SoftErrorLimiter joint angle output
+        reach_angle = math.degrees(hcf.getActualState().command[link_info.jointId])
         is_reached = abs(reach_angle - target_angle) < thre
         # Check actual velocity from Datalogger log
         poslist=[]
         for line in open("/tmp/test-samplerobot-el-err-check.SampleRobot(Robot)0_q", "r"):
             poslist.append(float(line.split(" ")[link_info.jointId+1]))
-        tmp = map(lambda x,y : x-y, poslist[1:], poslist[0:-1])
+        refposlist=[]
+        for line in open("/tmp/test-samplerobot-el-err-check.el_q", "r"):
+            refposlist.append(float(line.split(" ")[link_info.jointId+1]))
+        tmp = map(lambda x,y : x-y, refposlist, poslist)
         max_ret_err = max(tmp) if is_upper_limit else min(tmp)
-        is_err_limited = abs(max_ret_err - math.radians(error_limit)) < thre
+        is_err_limited = abs(max_ret_err - error_limit) < thre
         # Enable error limit by reverting limit value and reset joint angle
         hcf.el_svc.setServoErrorLimit("all", (0.2-0.02))
         hcf.setJointAngle(joint_name, math.degrees(initial_pose[link_info.jointId]), 0.5)
         hcf.waitInterpolation()
         # Check flags and print
         print >> sys.stderr, "    is_reached =", is_reached, ", is_err_limited =", is_err_limited,
-        print >> sys.stderr, ", target_angle =", target_angle, "[deg], reach_angle =", reach_angle, "[deg], max_ret_err =", max_ret_err, "[rad], err_limit =", math.radians(error_limit), "[rad]"
+        print >> sys.stderr, ", target_angle =", target_angle, "[deg], reach_angle =", reach_angle, "[deg], max_ret_err =", max_ret_err, "[rad], err_limit =", error_limit, "[rad]"
         assert(is_reached and is_err_limited)
 
 def demoErrorLimit():

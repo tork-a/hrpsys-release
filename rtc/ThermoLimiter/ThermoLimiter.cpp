@@ -8,7 +8,6 @@
  */
 
 #include "ThermoLimiter.h"
-#include "../SoftErrorLimiter/beep.h"
 #include <rtm/CorbaNaming.h>
 #include <hrpModel/ModelLoaderUtil.h>
 #include <hrpUtil/MatrixSolvers.h>
@@ -43,10 +42,10 @@ ThermoLimiter::ThermoLimiter(RTC::Manager* manager)
     // <rtc-template block="initializer">
     m_tempInIn("tempIn", m_tempIn),
     m_tauMaxOutOut("tauMax", m_tauMaxOut),
+    m_beepCommandOutOut("beepCommand", m_beepCommandOut),
     m_ThermoLimiterServicePort("ThermoLimiterService"),
     m_debugLevel(0)
 {
-  init_beep();
   m_ThermoLimiterService.thermolimiter(this);
 }
 
@@ -56,7 +55,7 @@ ThermoLimiter::~ThermoLimiter()
 
 RTC::ReturnCode_t ThermoLimiter::onInitialize()
 {
-  std::cout << m_profile.instance_name << ": onInitialize()" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "] : onInitialize()" << std::endl;
   // <rtc-template block="bind_config">
   // Bind variables and configuration variable
   bindParameter("debugLevel", m_debugLevel, "0");
@@ -70,6 +69,7 @@ RTC::ReturnCode_t ThermoLimiter::onInitialize()
 
   // Set OutPort buffer
   addOutPort("tauMax", m_tauMaxOutOut);
+  addOutPort("beepCommand", m_beepCommandOutOut);
   
   // Set service provider to Ports
   m_ThermoLimiterServicePort.registerProvider("service0", "ThermoLimiterService", m_ThermoLimiterService);
@@ -97,14 +97,14 @@ RTC::ReturnCode_t ThermoLimiter::onInitialize()
   if (!loadBodyFromModelLoader(m_robot, prop["model"].c_str(),
                                CosNaming::NamingContext::_duplicate(naming.getRootContext())
         )){
-    std::cerr << "failed to load model[" << prop["model"] << "]"
+    std::cerr << "[" << m_profile.instance_name << "] failed to load model[" << prop["model"] << "]"
               << std::endl;
   }
   // set limit of motor temperature
   coil::vstring motorTemperatureLimitFromConf = coil::split(prop["motor_temperature_limit"], ",");
   m_motorTemperatureLimit.resize(m_robot->numJoints());
   if (motorTemperatureLimitFromConf.size() != m_robot->numJoints()) {
-    std::cerr <<  "[WARN]: size of motor_temperature_limit is " << motorTemperatureLimitFromConf.size() << ", not equal to " << m_robot->numJoints() << std::endl;
+    std::cerr << "[" << m_profile.instance_name << "] [WARN]: size of motor_temperature_limit is " << motorTemperatureLimitFromConf.size() << ", not equal to " << m_robot->numJoints() << std::endl;
     for (int i = 0; i < m_robot->numJoints(); i++) {
       m_motorTemperatureLimit[i] = 80.0;
     }
@@ -126,13 +126,13 @@ RTC::ReturnCode_t ThermoLimiter::onInitialize()
   if (prop["ambient_tmp"] != "") {
     coil::stringTo(ambientTemp, prop["ambient_tmp"].c_str());
   }
-  std::cerr <<  m_profile.instance_name << ": ambient temperature: " << ambientTemp << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "] : ambient temperature: " << ambientTemp << std::endl;
 
   // set limit of motor heat parameters
   coil::vstring motorHeatParamsFromConf = coil::split(prop["motor_heat_params"], ",");
   m_motorHeatParams.resize(m_robot->numJoints());
   if (motorHeatParamsFromConf.size() != 2 * m_robot->numJoints()) {
-    std::cerr <<  "[WARN]: size of motor_heat_param is " << motorHeatParamsFromConf.size() << ", not equal to 2 * " << m_robot->numJoints() << std::endl;
+    std::cerr << "[" << m_profile.instance_name << "] [WARN]: size of motor_heat_param is " << motorHeatParamsFromConf.size() << ", not equal to 2 * " << m_robot->numJoints() << std::endl;
     for (int i = 0; i < m_robot->numJoints(); i++) {
       m_motorHeatParams[i].defaultParams();
       m_motorHeatParams[i].temperature = ambientTemp;
@@ -170,6 +170,7 @@ RTC::ReturnCode_t ThermoLimiter::onInitialize()
   // allocate memory for outPorts
   m_tauMaxOut.data.length(m_robot->numJoints());
   m_debug_print_freq = static_cast<int>(0.1/m_dt); // once per 0.1 [s]
+  m_beepCommandOut.data.length(bc.get_num_beep_info());
   
   return RTC::RTC_OK;
 }
@@ -197,13 +198,13 @@ RTC::ReturnCode_t ThermoLimiter::onShutdown(RTC::UniqueId ec_id)
 
 RTC::ReturnCode_t ThermoLimiter::onActivated(RTC::UniqueId ec_id)
 {
-  std::cout << m_profile.instance_name<< ": onActivated(" << ec_id << ")" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "] : onActivated(" << ec_id << ")" << std::endl;
   return RTC::RTC_OK;
 }
 
 RTC::ReturnCode_t ThermoLimiter::onDeactivated(RTC::UniqueId ec_id)
 {
-  std::cout << m_profile.instance_name<< ": onDeactivated(" << ec_id << ")" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "] : onDeactivated(" << ec_id << ")" << std::endl;
   return RTC::RTC_OK;
 }
 
@@ -271,6 +272,8 @@ RTC::ReturnCode_t ThermoLimiter::onExecute(RTC::UniqueId ec_id)
   }
   m_tauMaxOut.tm = tm;
   m_tauMaxOutOut.write();
+  m_beepCommandOut.tm = tm;
+  if (bc.isWritable()) m_beepCommandOutOut.write();
   return RTC::RTC_OK;
 }
 
@@ -365,16 +368,17 @@ void ThermoLimiter::callBeep(double ratio, double alarmRatio)
     const int emergency_beep_cycle = 200;
     int current_emergency_beep_cycle = m_loop % emergency_beep_cycle;
     if (current_emergency_beep_cycle <= (emergency_beep_cycle / 2)) {
-      start_beep(4000, 60);
+      bc.startBeep(4000, 60);
     } else {
-      start_beep(2000, 60);
+      bc.startBeep(2000, 60);
     }
   } else if (ratio > alarmRatio) { // normal warning
     int freq = minFreq + (maxFreq - minFreq) * ((ratio - alarmRatio) / (1.0 - alarmRatio));
-    start_beep(freq, 500);
+    bc.startBeep(freq, 500);
   } else {
-    stop_beep();
+    bc.stopBeep();
   }
+  bc.setDataPort(m_beepCommandOut);
   return;
 }
 
