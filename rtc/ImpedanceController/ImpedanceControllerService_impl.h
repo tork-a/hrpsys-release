@@ -2,7 +2,7 @@
 #ifndef IMPEDANCESERVICESVC_IMPL_H
 #define IMPEDANCESERVICESVC_IMPL_H
 
-#include "ImpedanceControllerService.hh"
+#include "hrpsys/idl/ImpedanceControllerService.hh"
 
 using namespace OpenHRP;
 
@@ -27,7 +27,7 @@ public:
   OpenHRP::ImpedanceControllerService::DetectorMode checkObjectTurnaroundDetection();
   CORBA::Boolean setObjectTurnaroundDetectorParam(const OpenHRP::ImpedanceControllerService::objectTurnaroundDetectorParam &i_param_);
   CORBA::Boolean getObjectTurnaroundDetectorParam(OpenHRP::ImpedanceControllerService::objectTurnaroundDetectorParam& i_param_);
-  CORBA::Boolean getObjectForcesMoments(OpenHRP::ImpedanceControllerService::Dbl3Sequence_out o_forces, OpenHRP::ImpedanceControllerService::Dbl3Sequence_out o_moments);
+  CORBA::Boolean getObjectForcesMoments(OpenHRP::ImpedanceControllerService::Dbl3Sequence_out o_forces, OpenHRP::ImpedanceControllerService::Dbl3Sequence_out o_moments, OpenHRP::ImpedanceControllerService::DblSequence3_out o_3dofwrench);
 
   //
   void impedance(ImpedanceController *i_impedance);
