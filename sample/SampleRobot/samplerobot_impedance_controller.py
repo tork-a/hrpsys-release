@@ -14,10 +14,12 @@ except:
     import time
 
 def init ():
-    global hcf
+    global hcf, hrpsys_version
     hcf = HrpsysConfigurator()
     hcf.getRTCList = hcf.getRTCListUnstable
     hcf.init ("SampleRobot(Robot)0", "$(PROJECT_DIR)/../model/sample1.wrl")
+    hrpsys_version = hcf.seq.ref.get_component_profile().version
+    print("hrpsys_version = %s"%hrpsys_version)
 
 def demo():
     init()
@@ -25,6 +27,15 @@ def demo():
     initial_pose = [-7.779e-005,  -0.378613,  -0.000209793,  0.832038,  -0.452564,  0.000244781,  0.31129,  -0.159481,  -0.115399,  -0.636277,  0,  0,  0,  -7.77902e-005,  -0.378613,  -0.000209794,  0.832038,  -0.452564,  0.000244781,  0.31129,  0.159481,  0.115399,  -0.636277,  0,  0,  0,  0,  0,  0]
     hcf.seq_svc.setJointAngles(initial_pose, 2.0)
     hcf.seq_svc.waitInterpolation()
+
+    # 0. startImpedance + stopImpedance python interface
+    print >> sys.stderr, "0. startImpedance + stopImpedance python interface"
+    hcf.startImpedance("rarm")
+    hcf.startImpedance("larm")
+    hcf.stopImpedance("larm")
+    hcf.stopImpedance("rarm")
+    if hrpsys_version < '315.5.0':
+        return
 
     # 1. Getter check
     print >> sys.stderr, "1. Getter check"
@@ -137,6 +148,21 @@ def demo():
         hcf.seq_svc.waitInterpolation();
     else:
         print >> sys.stderr, "8. World frame ref-force check is not executed in non-kinematics-only-mode"
+    # 9. Object Turnaround Detector set param check
+    print >> sys.stderr, "9. Object Turnaround Detector set param check"
+    ret9 = True
+    detect_time_thre = 0.3
+    start_time_thre=0.3
+    for number_disturbance in [0, 1e-5, -1e-5]: # 1e-5 is smaller than dt
+        otdp=hcf.ic_svc.getObjectTurnaroundDetectorParam()[1];
+        otdp.detect_time_thre = detect_time_thre + number_disturbance
+        otdp.start_time_thre = start_time_thre + number_disturbance
+        hcf.ic_svc.setObjectTurnaroundDetectorParam(otdp);
+        otdp2=hcf.ic_svc.getObjectTurnaroundDetectorParam()[1];
+        print >> sys.stderr, "  ", otdp2
+        ret9 = ret9 and (otdp2.detect_time_thre == detect_time_thre and otdp2.start_time_thre == start_time_thre)
+    assert(ret9)
+    print >> sys.stderr, "  => OK"
 
 if __name__ == '__main__':
     demo()
