@@ -8,9 +8,9 @@
  */
 
 #include <rtm/CorbaNaming.h>
+#include "hrpsys/util/VectorConvert.h"
 #include "RobotHardware.h"
 #include "robot.h"
-#include "hrpsys/util/VectorConvert.h"
 
 #include <hrpModel/Sensor.h>
 #include <hrpModel/ModelLoaderUtil.h>
@@ -112,8 +112,11 @@ RTC::ReturnCode_t RobotHardware::onInitialize()
   if (!loadBodyFromModelLoader(m_robot, prop["model"].c_str(), 
                                CosNaming::NamingContext::_duplicate(naming.getRootContext())
           )){
-      std::cerr << "failed to load model[" << prop["model"] << "]" 
-                << std::endl;
+      if (prop["model"] == ""){
+          std::cerr << "[" << m_profile.instance_name << "] path to the model file is not defined. Please check the configuration file" << std::endl;
+      }else{
+          std::cerr << "[" << m_profile.instance_name << "] failed to load model[" << prop["model"] << "]" << std::endl;
+      }
   }
 
   std::vector<std::string> keys = prop.propertyNames();
@@ -219,16 +222,14 @@ RTC::ReturnCode_t RobotHardware::onDeactivated(RTC::UniqueId ec_id)
 RTC::ReturnCode_t RobotHardware::onExecute(RTC::UniqueId ec_id)
 {
     //std::cout << "RobotHardware:onExecute(" << ec_id << ")" << std::endl;
-  coil::TimeValue coiltm(coil::gettimeofday());
-  Time tm; 
-  tm.sec  = coiltm.sec();
-  tm.nsec = coiltm.usec() * 1000;
+  Time tm;
+  this->getTimeNow(tm);
 
   if (!m_isDemoMode){
       robot::emg_reason reason;
       int id;
       if (m_robot->checkEmergency(reason, id)){
-          if (reason == robot::EMG_SERVO_ERROR){
+          if (reason == robot::EMG_SERVO_ERROR || reason == robot::EMG_POWER_OFF){
               m_robot->servo("all", false);
               m_emergencySignal.data = reason;
               m_emergencySignalOut.write();
