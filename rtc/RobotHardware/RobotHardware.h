@@ -10,6 +10,9 @@
 #ifndef ROBOT_HARDWARE_H
 #define ROBOT_HARDWARE_H
 
+#include <rtm/idl/BasicDataType.hh>
+#include <rtm/idl/ExtendedDataTypes.hh>
+#include "hrpsys/idl/HRPDataTypes.hh"
 #include <rtm/Manager.h>
 #include <rtm/DataFlowComponentBase.h>
 #include <rtm/CorbaPort.h>
@@ -17,7 +20,6 @@
 #include <rtm/DataOutPort.h>
 #include <rtm/idl/BasicDataTypeSkel.h>
 #include <rtm/idl/ExtendedDataTypesSkel.h>
-#include "hrpsys/idl/HRPDataTypes.hh"
 
 #include <hrpModel/Body.h>
 
@@ -101,6 +103,11 @@ class RobotHardware
   // no corresponding operation exists in OpenRTm-aist-0.2.0
   // virtual RTC::ReturnCode_t onRateChanged(RTC::UniqueId ec_id);
 
+  virtual inline void getTimeNow(Time &tm) {
+      coil::TimeValue coiltm(coil::gettimeofday());
+      tm.sec  = coiltm.sec();
+      tm.nsec = coiltm.usec() * 1000;
+  };
 
  protected:
   // Configuration variable declaration
@@ -193,6 +200,7 @@ class RobotHardware
   
   // </rtc-template>
 
+  robot *robot_ptr(void) { return m_robot.get(); };
  private:
   int dummy;
   boost::shared_ptr<robot> m_robot;

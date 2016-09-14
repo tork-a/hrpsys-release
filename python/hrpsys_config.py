@@ -874,6 +874,9 @@ class HrpsysConfigurator:
         if self.rmfo != None:
             for sen in filter(lambda x: x.type == "Force", self.sensors):
                 self.connectLoggerPort(self.rmfo, "off_"+sen.name)
+        if self.rfu != None:
+            for sen in filter(lambda x: x.type == "Force", self.sensors):
+                self.connectLoggerPort(self.rfu, "ref_"+sen.name+"Out")
         self.log_svc.clear()
         ## parallel running log process (outside from rtcd) for saving logs by emergency signal
         if self.log and (self.log_use_owned_ec or not isinstance(self.log.owned_ecs[0], OpenRTM._objref_ExtTrigExecutionContextService)):
@@ -943,6 +946,11 @@ class HrpsysConfigurator:
         print(self.configurator_name + "simulation_mode : %s" % self.simulation_mode)
 
     def waitForRTCManagerAndRoboHardware(self, robotname="Robot", managerhost=nshost):
+        print("\033[93m%s waitForRTCManagerAndRoboHardware has renamed to " % self.configurator_name + \
+              "waitForRTCManagerAndRoboHardware: Please update your code\033[0m")
+        return self.waitForRTCManagerAndRobotHardware(robotname=robotname, managerhost=managerhost)
+
+    def waitForRTCManagerAndRobotHardware(self, robotname="Robot", managerhost=nshost):
         '''!@brief
         Wait for both RTC Manager (waitForRTCManager()) and RobotHardware (waitForRobotHardware())
 
@@ -1053,15 +1061,15 @@ class HrpsysConfigurator:
 
     def setJointAnglesSequence(self, angless, tms):
         '''!@brief
-        Set all joint angles.
+        Set all joint angles. len(angless) should be equal to len(tms).
         \verbatim
         NOTE: While this method does not check angle value range,
               any joints could emit position limit over error, which has not yet
               been thrown by hrpsys so that there's no way to catch on this python client. 
               Worthwhile opening an enhancement ticket at designated issue tracker.
         \endverbatim
-        @param sequence angles list of float: In degree.
-        @param tm sequence of float: Time to complete, In Second
+        @param sequential list of angles in float: In rad
+        @param tm sequential list of time in float: Time to complete, In Second
         '''
         for angles in angless:
             for i in range(len(angles)):
@@ -1078,8 +1086,8 @@ class HrpsysConfigurator:
               Worthwhile opening an enhancement ticket at designated issue tracker.
         \endverbatim
         @param gname str: Name of the joint group.
-        @param sequence angles list of float: In degree.
-        @param tm sequence of float: Time to complete, In Second
+        @param sequential list of angles in float: In rad
+        @param tm sequential list of time in float: Time to complete, In Second
         '''
         for angles in angless:
             for i in range(len(angles)):
@@ -1129,6 +1137,14 @@ class HrpsysConfigurator:
         @param gname str: Name of the joint group.
         '''
         self.seq_svc.waitInterpolationOfGroup(gname)
+
+    def setInterpolationMode(self, mode):
+        '''!@brief
+        Set interpolation mode. You may need to import OpenHRP in order to pass an argument. For more info See https://github.com/fkanehiro/hrpsys-base/pull/1012#issue-160802911. 
+        @param mode new interpolation mode. Either { OpenHRP.SequencePlayerService.LINEAR, OpenHRP.SequencePlayerService.HOFFARBIB }.
+        @return true if set successfully, false otherwise
+        '''
+        return self.seq_svc.setInterpolationMode(mode)
 
     def getJointAngles(self):
         '''!@brief
@@ -2094,7 +2110,7 @@ dr=0, dp=0, dw=0, tm=10, wait=True):
         print(self.configurator_name + "start hrpsys")
 
         print(self.configurator_name + "finding RTCManager and RobotHardware")
-        self.waitForRTCManagerAndRoboHardware(robotname)
+        self.waitForRTCManagerAndRobotHardware(robotname)
         self.sensors = self.getSensors(url)
 
         print(self.configurator_name + "creating components")
