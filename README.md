@@ -1,3 +1,26 @@
+## hrpsys (kinetic) - 315.10.1-0
+
+The packages in the `hrpsys` repository were released into the `kinetic` distro by running `/var/lib/jenkins/send_to_bloom.py fkanehiro hrpsys-base hrpsys` on `Sat, 08 Oct 2016 12:36:23 -0000`
+
+The `hrpsys` package was released.
+
+Version of package(s) in repository `hrpsys`:
+
+- upstream repository: https://github.com/fkanehiro/hrpsys-base.git
+- release repository: https://github.com/tork-a/hrpsys-release.git
+- rosdistro version: `315.10.0-0`
+- old version: `315.10.0-0`
+- new version: `315.10.1-0`
+
+Versions of tools used:
+
+- bloom version: `0.5.22`
+- catkin_pkg version: `0.2.10`
+- rosdep version: `0.11.5`
+- rosdistro version: `0.4.7`
+- vcstools version: `0.1.39`
+
+
 ## hrpsys (jade) - 315.10.1-0
 
 The packages in the `hrpsys` repository were released into the `jade` distro by running `/var/lib/jenkins/send_to_bloom.py fkanehiro hrpsys-base hrpsys` on `Sat, 08 Oct 2016 12:30:10 -0000`
