@@ -27,6 +27,8 @@ set(idl_files
   TorqueControllerService.idl
   ThermoLimiterService.idl
   ReferenceForceUpdaterService.idl
+  AccelerationFilterService.idl
+  ObjectContactTurnaroundDetectorService.idl
   )
 
 set(openhrp_idl_files
