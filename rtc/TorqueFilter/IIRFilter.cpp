@@ -1,4 +1,5 @@
 #include "IIRFilter.h"
+#include <numeric>
 
 IIRFilter::IIRFilter(unsigned int dim, std::vector<double>& fb_coeffs, std::vector<double>& ff_coeffs, const std::string& error_prefix)
 {
@@ -29,7 +30,7 @@ IIRFilter::IIRFilter(const std::string& error_prefix) :
     m_error_prefix = error_prefix;
 }
 
-bool IIRFilter::setParameter(int dim, std::vector<double>& A, std::vector<double> B) {
+bool IIRFilter::setParameter(int dim, std::vector<double>& A, std::vector<double>& B) {
     m_dimension = dim;
 
     // init coefficients
@@ -37,6 +38,10 @@ bool IIRFilter::setParameter(int dim, std::vector<double>& A, std::vector<double
         std::cout << "[" <<  m_error_prefix << "]" << "IIRFilter coefficients size error" << std::endl;
         return false;
     }
+
+    // clear previous coefficients
+    m_fb_coefficients.clear();
+    m_ff_coefficients.clear();
 
     if (A.size() == dim) {
         m_fb_coefficients.push_back(1.0);
@@ -61,8 +66,36 @@ bool IIRFilter::setParameter(int dim, std::vector<double>& A, std::vector<double
     return true;
 }
 
+void IIRFilter::getParameter(int &dim, std::vector<double>& A, std::vector<double>& B)
+{
+    dim = m_dimension;
+    B.resize(m_ff_coefficients.size());
+    std::copy(m_ff_coefficients.begin(), m_ff_coefficients.end(), B.begin());
+    A.resize(0);
+    for(std::vector<double>::iterator it = m_fb_coefficients.begin();
+        it != m_fb_coefficients.end(); it++) {
+        if (it == m_fb_coefficients.begin()) {
+            A.push_back(*it);
+        } else {
+            A.push_back(- *it);
+        }
+    }
+}
+
+void IIRFilter::reset(double initial_input)
+{
+    // y[n] = b[0]*w[n] + b[1]*w[n-1] + ... + b[m]*w[n-m] in DirectForm-II.
+    // When n->inf, y[n]->initial_input and w[n], w[n-1], ..., w[n-m] -> w,
+    // m_previous_values should preserve w
+    double sum_ff_coeffs = std::accumulate(m_ff_coefficients.begin(), m_ff_coefficients.end(), 0.0);
+    double reset_val = initial_input / sum_ff_coeffs;
+    m_previous_values.assign(m_dimension, reset_val);
+}
+
 double IIRFilter::passFilter(double input)
 {
+    // IIRFilter implementation based on DirectForm-II.
+    // Cf. https://en.wikipedia.org/wiki/Digital_filter
     if (! m_initialized) {
         return 0.0;
     }
