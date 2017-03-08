@@ -40,6 +40,17 @@ static const char* autobalancer_spec[] =
     };
 // </rtc-template>
 
+static std::ostream& operator<<(std::ostream& os, const struct RTC::Time &tm)
+{
+    int pre = os.precision();
+    os.setf(std::ios::fixed);
+    os << std::setprecision(6)
+       << (tm.sec + tm.nsec/1e9)
+       << std::setprecision(pre);
+    os.unsetf(std::ios::fixed);
+    return os;
+}
+
 AutoBalancer::AutoBalancer(RTC::Manager* manager)
     : RTC::DataFlowComponentBase(manager),
       // <rtc-template block="initializer">
@@ -57,6 +68,7 @@ AutoBalancer::AutoBalancer(RTC::Manager* manager)
       m_basePoseOut("basePoseOut", m_basePose),
       m_accRefOut("accRef", m_accRef),
       m_contactStatesOut("contactStates", m_contactStates),
+      m_toeheelRatioOut("toeheelRatio", m_toeheelRatio),
       m_controlSwingSupportTimeOut("controlSwingSupportTime", m_controlSwingSupportTime),
       m_walkingStatesOut("walkingStates", m_walkingStates),
       m_sbpCogOffsetOut("sbpCogOffset", m_sbpCogOffset),
@@ -100,6 +112,7 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
     addOutPort("basePoseOut", m_basePoseOut);
     addOutPort("accRef", m_accRefOut);
     addOutPort("contactStates", m_contactStatesOut);
+    addOutPort("toeheelRatio", m_toeheelRatioOut);
     addOutPort("controlSwingSupportTime", m_controlSwingSupportTimeOut);
     addOutPort("cogOut", m_cogOut);
     addOutPort("walkingStates", m_walkingStatesOut);
@@ -200,6 +213,7 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
         contact_states_index_map.insert(std::pair<std::string, size_t>(ee_name, i));
       }
       m_contactStates.data.length(num);
+      m_toeheelRatio.data.length(num);
       if (ikp.find("rleg") != ikp.end() && ikp.find("lleg") != ikp.end()) {
         m_contactStates.data[contact_states_index_map["rleg"]] = true;
         m_contactStates.data[contact_states_index_map["lleg"]] = true;
@@ -210,6 +224,7 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
       }
       m_controlSwingSupportTime.data.length(num);
       for (size_t i = 0; i < num; i++) m_controlSwingSupportTime.data[i] = 0.0;
+      for (size_t i = 0; i < num; i++) m_toeheelRatio.data[i] = rats::no_using_toe_heel_ratio;
     }
     std::vector<hrp::Vector3> leg_pos;
     if (leg_offset_str.size() > 0) {
@@ -272,6 +287,12 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
     unsigned int npforce = m_robot->numSensors(hrp::Sensor::FORCE);
     unsigned int nvforce = m_vfs.size();
     unsigned int nforce  = npforce + nvforce;
+    // check number of force sensors
+    if (nforce < m_contactStates.data.length()) {
+        std::cerr << "[" << m_profile.instance_name << "] WARNING! This robot model has less force sensors(" << nforce;
+        std::cerr << ") than end-effector settings(" << m_contactStates.data.length() << ") !" << std::endl;
+    }
+
     m_ref_force.resize(nforce);
     m_ref_forceIn.resize(nforce);
     m_force.resize(nforce);
@@ -335,10 +356,14 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
     has_ik_failed = false;
     is_hand_fix_mode = false;
 
-    pos_ik_thre = 0.1*1e-3; // [m]
+    pos_ik_thre = 0.5*1e-3; // [m]
     rot_ik_thre = (1e-2)*M_PI/180.0; // [rad]
     ik_error_debug_print_freq = static_cast<int>(0.2/m_dt); // once per 0.2 [s]
 
+    hrp::Sensor* sen = m_robot->sensor<hrp::RateGyroSensor>("gyrometer");
+    if (sen == NULL) {
+        std::cerr << "[" << m_profile.instance_name << "] WARNING! This robot model has no GyroSensor named 'gyrometer'! " << std::endl;
+    }
     return RTC::RTC_OK;
 }
 
@@ -381,7 +406,7 @@ RTC::ReturnCode_t AutoBalancer::onDeactivated(RTC::UniqueId ec_id)
   if (control_mode == MODE_ABC) {
     control_mode = MODE_SYNC_TO_IDLE;
     double tmp_ratio = 0.0;
-    transition_interpolator->go(&tmp_ratio, m_dt, true); // sync in one controller loop
+    transition_interpolator->setGoal(&tmp_ratio, m_dt, true); // sync in one controller loop
   }
   return RTC::RTC_OK;
 }
@@ -481,7 +506,8 @@ RTC::ReturnCode_t AutoBalancer::onExecute(RTC::UniqueId ec_id)
       if (control_mode == MODE_SYNC_TO_ABC) {
         control_mode = MODE_ABC;
       } else if (control_mode == MODE_SYNC_TO_IDLE && transition_interpolator->isEmpty() ) {
-        std::cerr << "[" << m_profile.instance_name << "] Finished cleanup" << std::endl;
+        std::cerr << "[" << m_profile.instance_name << "] [" << m_qRef.tm
+                  << "] Finished cleanup" << std::endl;
         control_mode = MODE_IDLE;
       }
     }
@@ -562,6 +588,8 @@ RTC::ReturnCode_t AutoBalancer::onExecute(RTC::UniqueId ec_id)
     m_contactStatesOut.write();
     m_controlSwingSupportTime.tm = m_qRef.tm;
     m_controlSwingSupportTimeOut.write();
+    m_toeheelRatio.tm = m_qRef.tm;
+    m_toeheelRatioOut.write();
     m_walkingStates.data = gg_is_walking;
     m_walkingStates.tm = m_qRef.tm;
     m_walkingStatesOut.write();
@@ -577,6 +605,10 @@ RTC::ReturnCode_t AutoBalancer::onExecute(RTC::UniqueId ec_id)
 
     for (unsigned int i=0; i<m_limbCOPOffsetOut.size(); i++){
         m_limbCOPOffset[i].tm = m_qRef.tm;
+        // transition (TODO:set stopABCmode value instead of 0)
+        m_limbCOPOffset[i].data.x = transition_interpolator_ratio * m_limbCOPOffset[i].data.x;// + (1-transition_interpolator_ratio) * 0;
+        m_limbCOPOffset[i].data.y = transition_interpolator_ratio * m_limbCOPOffset[i].data.y;// + (1-transition_interpolator_ratio) * 0;
+        m_limbCOPOffset[i].data.z = transition_interpolator_ratio * m_limbCOPOffset[i].data.z;// + (1-transition_interpolator_ratio) * 0;
         m_limbCOPOffsetOut[i]->write();
     }
 
@@ -603,7 +635,6 @@ void AutoBalancer::getTargetParameters()
   m_robot->rootLink()->p = input_basePos;
   m_robot->rootLink()->R = input_baseRot;
   m_robot->calcForwardKinematics();
-  //
   if (control_mode != MODE_IDLE) {
     coordinates tmp_fix_coords;
     if (!zmp_offset_interpolator->isEmpty()) {
@@ -698,6 +729,18 @@ void AutoBalancer::getTargetParameters()
               m_limbCOPOffset[contact_states_index_map[sup_leg_nms.at(i)]].data.x = gg->get_support_foot_zmp_offsets().at(i)(0);
               m_limbCOPOffset[contact_states_index_map[sup_leg_nms.at(i)]].data.y = gg->get_support_foot_zmp_offsets().at(i)(1);
               m_limbCOPOffset[contact_states_index_map[sup_leg_nms.at(i)]].data.z = gg->get_support_foot_zmp_offsets().at(i)(2);
+          }
+      }
+      // Set toe heel ratio which can be used force moment distribution
+      {
+          std::map<leg_type, std::string> leg_type_map = gg->get_leg_type_map();
+          // for support leg
+          for (std::vector<step_node>::const_iterator it = gg->get_support_leg_steps().begin(); it != gg->get_support_leg_steps().end(); it++) {
+              m_toeheelRatio.data[contact_states_index_map[leg_type_map[it->l_r]]] = rats::no_using_toe_heel_ratio;
+          }
+          // for swing leg
+          for (std::vector<step_node>::const_iterator it = gg->get_swing_leg_steps().begin(); it != gg->get_swing_leg_steps().end(); it++) {
+              m_toeheelRatio.data[contact_states_index_map[leg_type_map[it->l_r]]] = gg->get_current_toe_heel_ratio();
           }
       }
     } else {
@@ -885,6 +928,21 @@ void AutoBalancer::getTargetParameters()
       ref_zmp(1) = ref_cog(1);
       ref_zmp(2) = tmp_foot_mid_pos(2);
     }
+  } else { // MODE_IDLE
+      // Update fix_leg_coords based on input basePos and rot if MODE_IDLE
+      std::vector<coordinates> tmp_end_coords_list;
+      for ( std::map<std::string, ABCIKparam>::iterator it = ikp.begin(); it != ikp.end(); it++ ) {
+          if ( std::find(leg_names.begin(), leg_names.end(), it->first) != leg_names.end() ) {
+              tmp_end_coords_list.push_back(coordinates(it->second.target_link->p+it->second.target_link->R*it->second.localPos, it->second.target_link->R*it->second.localR));
+          }
+      }
+      multi_mid_coords(fix_leg_coords, tmp_end_coords_list);
+      // limbCOPOffset
+      for (unsigned int i=0; i<m_limbCOPOffsetOut.size(); i++){
+          m_limbCOPOffset[i].data.x = 0;
+          m_limbCOPOffset[i].data.y = 0;
+          m_limbCOPOffset[i].data.z = 0;
+      }
   }
 };
 
@@ -928,7 +986,8 @@ bool AutoBalancer::solveLimbIKforLimb (ABCIKparam& param, const std::string& lim
   rats::difference_rotation(vel_r, param.target_link->R, param.target_r0);
   if (vel_p.norm() > pos_ik_thre && transition_interpolator->isEmpty()) {
       if (param.pos_ik_error_count % ik_error_debug_print_freq == 0) {
-          std::cerr << "[" << m_profile.instance_name << "] Too large IK error in " << limb_name << " (vel_p) = [" << vel_p(0) << " " << vel_p(1) << " " << vel_p(2) << "][m], count = " << param.pos_ik_error_count << std::endl;
+          std::cerr << "[" << m_profile.instance_name << "] [" << m_qRef.tm
+                    << "] Too large IK error in " << limb_name << " (vel_p) = [" << vel_p(0) << " " << vel_p(1) << " " << vel_p(2) << "][m], count = " << param.pos_ik_error_count << std::endl;
       }
       param.pos_ik_error_count++;
       has_ik_failed = true;
@@ -937,7 +996,8 @@ bool AutoBalancer::solveLimbIKforLimb (ABCIKparam& param, const std::string& lim
   }
   if (vel_r.norm() > rot_ik_thre && transition_interpolator->isEmpty()) {
       if (param.rot_ik_error_count % ik_error_debug_print_freq == 0) {
-          std::cerr << "[" << m_profile.instance_name << "] Too large IK error in " << limb_name << " (vel_r) = [" << vel_r(0) << " " << vel_r(1) << " " << vel_r(2) << "][rad], count = " << param.rot_ik_error_count << std::endl;
+          std::cerr << "[" << m_profile.instance_name << "] [" << m_qRef.tm
+                    << "] Too large IK error in " << limb_name << " (vel_r) = [" << vel_r(0) << " " << vel_r(1) << " " << vel_r(2) << "][rad], count = " << param.rot_ik_error_count << std::endl;
       }
       param.rot_ik_error_count++;
       has_ik_failed = true;
@@ -1029,7 +1089,7 @@ void AutoBalancer::startABCparam(const OpenHRP::AutoBalancerService::StrSequence
   transition_interpolator->clear();
   transition_interpolator->set(&tmp_ratio);
   tmp_ratio = 1.0;
-  transition_interpolator->go(&tmp_ratio, transition_time, true);
+  transition_interpolator->setGoal(&tmp_ratio, transition_time, true);
   for ( std::map<std::string, ABCIKparam>::iterator it = ikp.begin(); it != ikp.end(); it++ ) {
     it->second.is_active = false;
   }
@@ -1051,7 +1111,7 @@ void AutoBalancer::stopABCparam()
   transition_interpolator->clear();
   transition_interpolator->set(&tmp_ratio);
   tmp_ratio = 0.0;
-  transition_interpolator->go(&tmp_ratio, transition_time, true);
+  transition_interpolator->setGoal(&tmp_ratio, transition_time, true);
   control_mode = MODE_SYNC_TO_IDLE;
 }
 
@@ -1410,11 +1470,14 @@ bool AutoBalancer::setGaitGeneratorParam(const OpenHRP::AutoBalancerService::Gai
   gg->set_heel_pos_offset_x(i_param.heel_pos_offset_x);
   gg->set_toe_zmp_offset_x(i_param.toe_zmp_offset_x);
   gg->set_heel_zmp_offset_x(i_param.heel_zmp_offset_x);
+  gg->set_toe_check_thre(i_param.toe_check_thre);
+  gg->set_heel_check_thre(i_param.heel_check_thre);
   std::vector<double> tmp_ratio(i_param.toe_heel_phase_ratio.get_buffer(), i_param.toe_heel_phase_ratio.get_buffer()+i_param.toe_heel_phase_ratio.length());
   std::cerr << "[" << m_profile.instance_name << "]   "; // for set_toe_heel_phase_ratio
   gg->set_toe_heel_phase_ratio(tmp_ratio);
   gg->set_use_toe_joint(i_param.use_toe_joint);
   gg->set_use_toe_heel_transition(i_param.use_toe_heel_transition);
+  gg->set_use_toe_heel_auto_set(i_param.use_toe_heel_auto_set);
   gg->set_zmp_weight_map(boost::assign::map_list_of<leg_type, double>(RLEG, i_param.zmp_weight_map[0])(LLEG, i_param.zmp_weight_map[1])(RARM, i_param.zmp_weight_map[2])(LARM, i_param.zmp_weight_map[3]));
   gg->set_optional_go_pos_finalize_footstep_num(i_param.optional_go_pos_finalize_footstep_num);
   gg->set_overwritable_footstep_index_offset(i_param.overwritable_footstep_index_offset);
@@ -1484,11 +1547,14 @@ bool AutoBalancer::getGaitGeneratorParam(OpenHRP::AutoBalancerService::GaitGener
   i_param.heel_pos_offset_x = gg->get_heel_pos_offset_x();
   i_param.toe_zmp_offset_x = gg->get_toe_zmp_offset_x();
   i_param.heel_zmp_offset_x = gg->get_heel_zmp_offset_x();
+  i_param.toe_check_thre = gg->get_toe_check_thre();
+  i_param.heel_check_thre = gg->get_heel_check_thre();
   std::vector<double> ratio(gg->get_NUM_TH_PHASES(),0.0);
   gg->get_toe_heel_phase_ratio(ratio);
   for (int i = 0; i < gg->get_NUM_TH_PHASES(); i++) i_param.toe_heel_phase_ratio[i] = ratio[i];
   i_param.use_toe_joint = gg->get_use_toe_joint();
   i_param.use_toe_heel_transition = gg->get_use_toe_heel_transition();
+  i_param.use_toe_heel_auto_set = gg->get_use_toe_heel_auto_set();
   std::map<leg_type, double> tmp_zmp_weight_map = gg->get_zmp_weight_map();
   i_param.zmp_weight_map[0] = tmp_zmp_weight_map[RLEG];
   i_param.zmp_weight_map[1] = tmp_zmp_weight_map[LLEG];
@@ -1524,7 +1590,7 @@ bool AutoBalancer::setAutoBalancerParam(const OpenHRP::AutoBalancerService::Auto
   adjust_footstep_transition_time = i_param.adjust_footstep_transition_time;
   if (zmp_offset_interpolator->isEmpty()) {
       zmp_offset_interpolator->clear();
-      zmp_offset_interpolator->go(default_zmp_offsets_array, zmp_transition_time, true);
+      zmp_offset_interpolator->setGoal(default_zmp_offsets_array, zmp_transition_time, true);
   } else {
       std::cerr << "[" << m_profile.instance_name << "]   default_zmp_offsets cannot be set because interpolating." << std::endl;
   }
@@ -1568,7 +1634,7 @@ bool AutoBalancer::setAutoBalancerParam(const OpenHRP::AutoBalancerService::Auto
               double tmp_ratio = 0.0;
               leg_names_interpolator->set(&tmp_ratio);
               tmp_ratio = 1.0;
-              leg_names_interpolator->go(&tmp_ratio, 5.0, true);
+              leg_names_interpolator->setGoal(&tmp_ratio, 5.0, true);
               control_mode = MODE_SYNC_TO_ABC;
           }
       }
@@ -1813,7 +1879,8 @@ bool AutoBalancer::getFootstepParam(OpenHRP::AutoBalancerService::FootstepParam&
 
 bool AutoBalancer::adjustFootSteps(const OpenHRP::AutoBalancerService::Footstep& rfootstep, const OpenHRP::AutoBalancerService::Footstep& lfootstep)
 {
-  std::cerr << "[" << m_profile.instance_name << "] adjustFootSteps" << std::endl;
+  std::cerr << "[" << m_profile.instance_name << "] [" << m_qRef.tm
+            << "] adjustFootSteps" << std::endl;
   if (control_mode == MODE_ABC && !gg_is_walking && adjust_footstep_interpolator->isEmpty()) {
       Guard guard(m_mutex);
       //
@@ -1866,7 +1933,7 @@ bool AutoBalancer::adjustFootSteps(const OpenHRP::AutoBalancerService::Footstep&
       double tmp = 0.0;
       adjust_footstep_interpolator->set(&tmp);
       tmp = 1.0;
-      adjust_footstep_interpolator->go(&tmp, adjust_footstep_transition_time, true);
+      adjust_footstep_interpolator->setGoal(&tmp, adjust_footstep_transition_time, true);
   }
   while (!adjust_footstep_interpolator->isEmpty() )
     usleep(1000);
