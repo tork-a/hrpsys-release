@@ -1,0 +1,224 @@
+From e243bf43dd6ca8a168c2ab8ee115e1e5fd5aa128 Mon Sep 17 00:00:00 2001
+From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
+Date: Thu, 16 Apr 2020 19:39:40 +0900
+Subject: [PATCH 2/3] add patches to Update to compile with C++11
+ (https://github.com/fkanehiro/hrpsys-base/pull/1217)
+
+Here are a few changes that were accidentally left out in the previous attempt to compile with C++11.
+---
+ rtc/AutoBalancer/AutoBalancer.cpp             | 23 +++++++-------
+ rtc/AutoBalancer/GaitGenerator.h              | 16 +++++-----
+ rtc/AutoBalancer/testGaitGenerator.cpp        | 30 +++++++++----------
+ .../RemoveForceSensorLinkOffset.h             |  3 ++
+ 4 files changed, 37 insertions(+), 35 deletions(-)
+
+diff --git a/rtc/AutoBalancer/AutoBalancer.cpp b/rtc/AutoBalancer/AutoBalancer.cpp
+index c3829d2..6789c46 100644
+--- a/rtc/AutoBalancer/AutoBalancer.cpp
++++ b/rtc/AutoBalancer/AutoBalancer.cpp
+@@ -1283,13 +1283,13 @@ bool AutoBalancer::goVelocity(const double& vx, const double& vy, const double&
+     std::vector<leg_type> current_legs;
+     switch(gait_type) {
+     case BIPED:
+-        current_legs = (vy > 0 ? boost::assign::list_of(RLEG) : boost::assign::list_of(LLEG));
++        current_legs.assign (1, vy > 0 ? RLEG : LLEG);
+         break;
+     case TROT:
+-        current_legs = (vy > 0 ? boost::assign::list_of(RLEG)(LARM) : boost::assign::list_of(LLEG)(RARM));
++        current_legs = (vy > 0 ? boost::assign::list_of(RLEG)(LARM) : boost::assign::list_of(LLEG)(RARM)).convert_to_container < std::vector<leg_type> > ();
+         break;
+     case PACE:
+-        current_legs = (vy > 0 ? boost::assign::list_of(RLEG)(RARM) : boost::assign::list_of(LLEG)(LARM));
++        current_legs = (vy > 0 ? boost::assign::list_of(RLEG)(RARM) : boost::assign::list_of(LLEG)(LARM)).convert_to_container < std::vector<leg_type> > ();
+         break;
+     case CRAWL:
+         std::cerr << "[" << m_profile.instance_name << "] crawl walk[" << gait_type << "] is not implemented yet." << std::endl;
+@@ -2130,22 +2130,23 @@ hrp::Vector3 AutoBalancer::calc_vel_from_hand_error (const coordinates& tmp_fix_
+ bool AutoBalancer::calc_inital_support_legs(const double& y, std::vector<coordinates>& initial_support_legs_coords, std::vector<leg_type>& initial_support_legs, coordinates& start_ref_coords) {
+     switch(gait_type) {
+     case BIPED:
+-        initial_support_legs_coords = (y > 0 ?
+-                                       boost::assign::list_of(coordinates(ikp["rleg"].target_p0, ikp["rleg"].target_r0))
+-                                       : boost::assign::list_of(coordinates(ikp["lleg"].target_p0, ikp["lleg"].target_r0)));
+-        initial_support_legs = (y > 0 ? boost::assign::list_of(RLEG) : boost::assign::list_of(LLEG));
++        initial_support_legs_coords.assign (1,
++                                            y > 0 ?
++                                            coordinates(ikp["rleg"].target_p0, ikp["rleg"].target_r0)
++                                            : coordinates(ikp["lleg"].target_p0, ikp["lleg"].target_r0));
++        initial_support_legs.assign (1, y > 0 ? RLEG : LLEG);
+         break;
+     case TROT:
+         initial_support_legs_coords = (y > 0 ?
+                                        boost::assign::list_of(coordinates(ikp["rleg"].target_p0, ikp["rleg"].target_r0))(coordinates(ikp["larm"].target_p0, ikp["larm"].target_r0))
+-                                       : boost::assign::list_of(coordinates(ikp["lleg"].target_p0, ikp["lleg"].target_r0))(coordinates(ikp["rarm"].target_p0, ikp["rarm"].target_r0)));
+-        initial_support_legs = (y > 0 ? boost::assign::list_of(RLEG)(LARM) : boost::assign::list_of(LLEG)(RARM));
++                                       : boost::assign::list_of(coordinates(ikp["lleg"].target_p0, ikp["lleg"].target_r0))(coordinates(ikp["rarm"].target_p0, ikp["rarm"].target_r0))).convert_to_container < std::vector<coordinates> > ();
++        initial_support_legs = (y > 0 ? boost::assign::list_of(RLEG)(LARM) : boost::assign::list_of(LLEG)(RARM)).convert_to_container < std::vector<leg_type> > ();
+         break;
+     case PACE:
+         initial_support_legs_coords = (y > 0 ?
+                                        boost::assign::list_of(coordinates(ikp["rleg"].target_p0, ikp["rleg"].target_r0))(coordinates(ikp["rarm"].target_p0, ikp["rarm"].target_r0))
+-                                       : boost::assign::list_of(coordinates(ikp["lleg"].target_p0, ikp["lleg"].target_r0))(coordinates(ikp["larm"].target_p0, ikp["larm"].target_r0)));
+-        initial_support_legs = (y > 0 ? boost::assign::list_of(RLEG)(RARM) : boost::assign::list_of(LLEG)(LARM));
++                                       : boost::assign::list_of(coordinates(ikp["lleg"].target_p0, ikp["lleg"].target_r0))(coordinates(ikp["larm"].target_p0, ikp["larm"].target_r0))).convert_to_container < std::vector<coordinates> > ();
++        initial_support_legs = (y > 0 ? boost::assign::list_of(RLEG)(RARM) : boost::assign::list_of(LLEG)(LARM)).convert_to_container < std::vector<leg_type> > ();
+         break;
+     case CRAWL:
+         std::cerr << "[" << m_profile.instance_name << "] crawl walk[" << gait_type << "] is not implemented yet." << std::endl;
+diff --git a/rtc/AutoBalancer/GaitGenerator.h b/rtc/AutoBalancer/GaitGenerator.h
+index 8517668..5a0b254 100644
+--- a/rtc/AutoBalancer/GaitGenerator.h
++++ b/rtc/AutoBalancer/GaitGenerator.h
+@@ -315,7 +315,7 @@ namespace rats
+           default_zmp_offsets.push_back(hrp::Vector3::Zero());
+           default_zmp_offsets.push_back(hrp::Vector3::Zero());
+           double zmp_weight_initial_value[4] = {1.0, 1.0, 0.1, 0.1};
+-          zmp_weight_map = boost::assign::map_list_of<leg_type, double>(RLEG, zmp_weight_initial_value[0])(LLEG, zmp_weight_initial_value[1])(RARM, zmp_weight_initial_value[2])(LARM, zmp_weight_initial_value[3]);
++          zmp_weight_map = boost::assign::map_list_of<leg_type, double>(RLEG, zmp_weight_initial_value[0])(LLEG, zmp_weight_initial_value[1])(RARM, zmp_weight_initial_value[2])(LARM, zmp_weight_initial_value[3]).convert_to_container< std::map<leg_type, double> > ();
+           zmp_weight_interpolator = boost::shared_ptr<interpolator>(new interpolator(4, dt));
+           zmp_weight_interpolator->set(zmp_weight_initial_value); /* set initial value */
+           zmp_weight_interpolator->setName("GaitGenerator zmp_weight_interpolator");
+@@ -385,7 +385,7 @@ namespace rats
+           if (!zmp_weight_interpolator->isEmpty()) {
+               double zmp_weight_output[4];
+               zmp_weight_interpolator->get(zmp_weight_output, true);
+-              zmp_weight_map = boost::assign::map_list_of<leg_type, double>(RLEG, zmp_weight_output[0])(LLEG, zmp_weight_output[1])(RARM, zmp_weight_output[2])(LARM, zmp_weight_output[3]);
++              zmp_weight_map = boost::assign::map_list_of<leg_type, double>(RLEG, zmp_weight_output[0])(LLEG, zmp_weight_output[1])(RARM, zmp_weight_output[2])(LARM, zmp_weight_output[3]).convert_to_container < std::map<leg_type, double> > ();
+           }
+       };
+ #ifdef FOR_TESTGAITGENERATOR
+@@ -752,9 +752,9 @@ namespace rats
+           toe_pos_offset_x(0.0), heel_pos_offset_x(0.0), toe_angle(0.0), heel_angle(0.0), foot_dif_rot_angle(0.0), toe_heel_dif_angle(0.0), use_toe_joint(false), use_toe_heel_auto_set(false),
+           current_src_toe_heel_type(SOLE), current_dst_toe_heel_type(SOLE)
+       {
+-        support_leg_types = boost::assign::list_of<leg_type>(RLEG);
+-        swing_leg_types = boost::assign::list_of<leg_type>(LLEG);
+-        current_swing_time = boost::assign::list_of<double>(0.0)(0.0)(0.0)(0.0);
++        support_leg_types.assign (1, RLEG);
++        swing_leg_types.assign (1, LLEG);
++        current_swing_time.assign (4, 0.0);
+         sdtg.set_dt(dt);
+         cdktg.set_dt(dt);
+         crdtg.set_dt(dt);
+@@ -1113,9 +1113,9 @@ namespace rats
+         velocity_mode_flg(VEL_IDLING), emergency_flg(IDLING), margin_time_ratio(0.01), footstep_modification_gain(5e-6),
+         use_inside_step_limitation(true), use_stride_limitation(false), modify_footsteps(false), default_stride_limitation_type(SQUARE),
+         preview_controller_ptr(NULL) {
+-        swing_foot_zmp_offsets = boost::assign::list_of<hrp::Vector3>(hrp::Vector3::Zero());
+-        prev_que_sfzos = boost::assign::list_of<hrp::Vector3>(hrp::Vector3::Zero());
+-        leg_type_map = boost::assign::map_list_of<leg_type, std::string>(RLEG, "rleg")(LLEG, "lleg")(RARM, "rarm")(LARM, "larm");
++        swing_foot_zmp_offsets.assign (1, hrp::Vector3::Zero());
++        prev_que_sfzos.assign (1, hrp::Vector3::Zero());
++        leg_type_map = boost::assign::map_list_of<leg_type, std::string>(RLEG, "rleg")(LLEG, "lleg")(RARM, "rarm")(LARM, "larm").convert_to_container < std::map<leg_type, std::string> > ();
+         for (size_t i = 0; i < 4; i++) leg_margin[i] = 0.1;
+         for (size_t i = 0; i < 5; i++) stride_limitation_for_circle_type[i] = 0.2;
+         for (size_t i = 0; i < 5; i++) overwritable_stride_limitation[i] = 0.2;
+diff --git a/rtc/AutoBalancer/testGaitGenerator.cpp b/rtc/AutoBalancer/testGaitGenerator.cpp
+index 95de17b..bc551e0 100644
+--- a/rtc/AutoBalancer/testGaitGenerator.cpp
++++ b/rtc/AutoBalancer/testGaitGenerator.cpp
+@@ -193,17 +193,17 @@ private:
+             fprintf(fp_cogzmp, "\n");
+             fflush(fp_cogzmp);
+ 
++#define VEC1(s) std::vector<std::string> (1, s)
++
+             // Foot pos
+             fprintf(fp_fpos, "%f ", i * dt);
+-            std::vector<std::string> tmp_string_vector = boost::assign::list_of("rleg");
+-            hrp::Vector3 rfoot_pos = (gg->get_support_leg_names() == tmp_string_vector) ? gg->get_support_leg_steps().front().worldcoords.pos : gg->get_swing_leg_steps().front().worldcoords.pos;
++            hrp::Vector3 rfoot_pos = (gg->get_support_leg_names() == VEC1 ("rleg")) ? gg->get_support_leg_steps().front().worldcoords.pos : gg->get_swing_leg_steps().front().worldcoords.pos;
+             for (size_t ii = 0; ii < 3; ii++) {
+                 fprintf(fp_fpos, "%f ", rfoot_pos(ii));
+                 min_rfoot_pos(ii) = std::min(min_rfoot_pos(ii), rfoot_pos(ii));
+                 max_rfoot_pos(ii) = std::max(max_rfoot_pos(ii), rfoot_pos(ii));
+             }
+-            tmp_string_vector = boost::assign::list_of("lleg");
+-            hrp::Vector3 lfoot_pos = (gg->get_support_leg_names() == tmp_string_vector) ? gg->get_support_leg_steps().front().worldcoords.pos : gg->get_swing_leg_steps().front().worldcoords.pos;
++            hrp::Vector3 lfoot_pos = (gg->get_support_leg_names() == VEC1("lleg")) ? gg->get_support_leg_steps().front().worldcoords.pos : gg->get_swing_leg_steps().front().worldcoords.pos;
+             for (size_t ii = 0; ii < 3; ii++) {
+                 fprintf(fp_fpos, "%f ", lfoot_pos(ii));
+                 min_lfoot_pos(ii) = std::min(min_lfoot_pos(ii), lfoot_pos(ii));
+@@ -214,14 +214,12 @@ private:
+ 
+             // Foot rot
+             fprintf(fp_frot, "%f ", i * dt);
+-            tmp_string_vector = boost::assign::list_of("rleg");
+-            hrp::Matrix33 rfoot_rot = (gg->get_support_leg_names() == tmp_string_vector) ? gg->get_support_leg_steps().front().worldcoords.rot : gg->get_swing_leg_steps().front().worldcoords.rot;
++    hrp::Matrix33 rfoot_rot = (gg->get_support_leg_names() == VEC1("rleg")) ? gg->get_support_leg_steps().front().worldcoords.rot : gg->get_swing_leg_steps().front().worldcoords.rot;
+             hrp::Vector3 rfoot_rpy = hrp::rpyFromRot(rfoot_rot);
+             for (size_t ii = 0; ii < 3; ii++) {
+                 fprintf(fp_frot, "%f ", rad2deg(rfoot_rpy(ii)));
+             }
+-            tmp_string_vector = boost::assign::list_of("lleg");
+-            hrp::Matrix33 lfoot_rot = (gg->get_support_leg_names() == tmp_string_vector) ? gg->get_support_leg_steps().front().worldcoords.rot : gg->get_swing_leg_steps().front().worldcoords.rot;
++    hrp::Matrix33 lfoot_rot = (gg->get_support_leg_names() == VEC1("lleg")) ? gg->get_support_leg_steps().front().worldcoords.rot : gg->get_swing_leg_steps().front().worldcoords.rot;
+             hrp::Vector3 lfoot_rpy = hrp::rpyFromRot(lfoot_rot);
+             for (size_t ii = 0; ii < 3; ii++) {
+                 fprintf(fp_frot, "%f ", rad2deg(lfoot_rpy(ii)));
+@@ -231,13 +229,11 @@ private:
+ 
+             // ZMP offsets
+             fprintf(fp_zoff, "%f ", i * dt);
+-            tmp_string_vector = boost::assign::list_of("rleg");
+-            hrp::Vector3 rfoot_zmp_offset = (gg->get_support_leg_names() == tmp_string_vector) ? gg->get_support_foot_zmp_offsets().front() : gg->get_swing_foot_zmp_offsets().front();
++    hrp::Vector3 rfoot_zmp_offset = (gg->get_support_leg_names() == VEC1("rleg")) ? gg->get_support_foot_zmp_offsets().front() : gg->get_swing_foot_zmp_offsets().front();
+             for (size_t ii = 0; ii < 3; ii++) {
+                 fprintf(fp_zoff, "%f ", rfoot_zmp_offset(ii));
+             }
+-            tmp_string_vector = boost::assign::list_of("lleg");
+-            hrp::Vector3 lfoot_zmp_offset = (gg->get_support_leg_names() == tmp_string_vector) ? gg->get_support_foot_zmp_offsets().front() : gg->get_swing_foot_zmp_offsets().front();
++    hrp::Vector3 lfoot_zmp_offset = (gg->get_support_leg_names() == VEC1("lleg")) ? gg->get_support_foot_zmp_offsets().front() : gg->get_swing_foot_zmp_offsets().front();
+             for (size_t ii = 0; ii < 3; ii++) {
+                 fprintf(fp_zoff, "%f ", lfoot_zmp_offset(ii));
+             }
+@@ -249,6 +245,8 @@ private:
+             min_zmp_offset_x = std::min(min_zmp_offset_x, tmpzoff);
+             max_zmp_offset_x = std::max(max_zmp_offset_x, tmpzoff);
+ 
++#undef VEC1
++
+             // Foot pos vel
+             fprintf(fp_fposvel, "%f ", i * dt);
+             if ( i == 0 ) prev_rfoot_pos = rfoot_pos;
+@@ -393,11 +391,11 @@ private:
+                 //   Foot pos and rot
+                 std::vector<hrp::Vector3> tmpvec = boost::assign::list_of(rfoot_pos)(lfoot_pos);
+                 footpos_diff_checker.checkValueDiff(tmpvec);
+-                tmpvec = boost::assign::list_of(rfoot_rpy)(lfoot_rpy);
++                tmpvec = boost::assign::list_of(rfoot_rpy)(lfoot_rpy).convert_to_container < std::vector<hrp::Vector3> > ();
+                 footrot_diff_checker.checkValueDiff(tmpvec);
+-                tmpvec = boost::assign::list_of(rfootpos_vel)(lfootpos_vel);
++                tmpvec = boost::assign::list_of(rfootpos_vel)(lfootpos_vel).convert_to_container < std::vector<hrp::Vector3> > ();
+                 footposvel_diff_checker.checkValueDiff(tmpvec);
+-                tmpvec = boost::assign::list_of(rfootrot_vel)(lfootrot_vel);
++                tmpvec = boost::assign::list_of(rfootrot_vel)(lfootrot_vel).convert_to_container < std::vector<hrp::Vector3> > ();
+                 footrotvel_diff_checker.checkValueDiff(tmpvec);
+                 //   Swing support mid coorsd
+                 ssmcpos_diff_checker.checkValueDiff(tmp_ssmc.pos);
+@@ -405,7 +403,7 @@ private:
+                 ssmcposvel_diff_checker.checkValueDiff(tmp_ssmcpos_vel);
+                 ssmcrotvel_diff_checker.checkValueDiff(tmp_ssmcrot_vel);
+                 //   ZMP offset
+-                tmpvec = boost::assign::list_of(rfoot_zmp_offset)(lfoot_zmp_offset);
++                tmpvec = boost::assign::list_of(rfoot_zmp_offset)(lfoot_zmp_offset).convert_to_container < std::vector<hrp::Vector3> > ();
+                 zmpoffset_diff_checker.checkValueDiff(tmpvec);
+             }
+             //   If contact states are not change, prev_swing_support_time is not dt, otherwise prev_swing_support_time is dt.
+diff --git a/rtc/RemoveForceSensorLinkOffset/RemoveForceSensorLinkOffset.h b/rtc/RemoveForceSensorLinkOffset/RemoveForceSensorLinkOffset.h
+index cecfc1e..f6a431d 100644
+--- a/rtc/RemoveForceSensorLinkOffset/RemoveForceSensorLinkOffset.h
++++ b/rtc/RemoveForceSensorLinkOffset/RemoveForceSensorLinkOffset.h
+@@ -181,6 +181,9 @@ class RemoveForceSensorLinkOffset
+   void printForceMomentOffsetParam(const std::string& i_name_);
+ 
+   std::map<std::string, ForceMomentOffsetParam> m_forcemoment_offset_param;
++#if __cplusplus >= 201103L
++  constexpr
++#endif
+   static const double grav = 9.80665; /* [m/s^2] */
+   double m_dt;
+   hrp::BodyPtr m_robot;
+-- 
+2.17.1
+

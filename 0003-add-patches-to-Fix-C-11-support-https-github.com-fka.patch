@@ -1,0 +1,28 @@
+From a8be2b96e9a58fbbc67a6fe3c5d8ea8f2329dae5 Mon Sep 17 00:00:00 2001
+From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
+Date: Thu, 16 Apr 2020 19:40:14 +0900
+Subject: [PATCH 3/3] add patches to Fix C++11 support
+ (https://github.com/fkanehiro/hrpsys-base/pull/1241)
+
+---
+ rtc/RangeDataViewer/RangeDataViewer.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/rtc/RangeDataViewer/RangeDataViewer.cpp b/rtc/RangeDataViewer/RangeDataViewer.cpp
+index e024fd4..4d3a637 100644
+--- a/rtc/RangeDataViewer/RangeDataViewer.cpp
++++ b/rtc/RangeDataViewer/RangeDataViewer.cpp
+@@ -9,6 +9,10 @@
+ 
+ #include "RangeDataViewer.h"
+ 
++#if __cplusplus >= 201103L
++using std::isinf;
++#endif
++
+ // Module specification
+ // <rtc-template block="module_spec">
+ static const char* cameraimageviewercomponent_spec[] =
+-- 
+2.17.1
+
