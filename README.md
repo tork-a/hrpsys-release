@@ -1,3 +1,26 @@
+## hrpsys (melodic) - 315.15.0-1
+
+The packages in the `hrpsys` repository were released into the `melodic` distro by running `/usr/bin/bloom-release hrpsys --rosdistro melodic` on `Thu, 16 Apr 2020 10:09:22 -0000`
+
+The `hrpsys` package was released.
+
+Version of package(s) in repository `hrpsys`:
+
+- upstream repository: https://github.com/fkanehiro/hrpsys-base.git
+- release repository: unknown
+- rosdistro version: `null`
+- old version: `null`
+- new version: `315.15.0-1`
+
+Versions of tools used:
+
+- bloom version: `0.9.0`
+- catkin_pkg version: `0.4.16`
+- rosdep version: `0.18.0`
+- rosdistro version: `0.8.0`
+- vcstools version: `0.1.42`
+
+
 ## hrpsys (indigo) - 315.12.1-0
 
 The packages in the `hrpsys` repository were released into the `indigo` distro by running `/usr/bin/bloom-release hrpsys --track indigo --rosdistro indigo` on `Wed, 05 Apr 2017 00:24:00 -0000`
