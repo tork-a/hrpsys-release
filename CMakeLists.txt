@@ -221,7 +221,7 @@ add_subdirectory(test)
 
 #if catkin environment
 string(REGEX MATCH "catkin" need_catkin "$ENV{_}")
-if(need_catkin OR "${CATKIN_BUILD_BINARY_PACKAGE}")
+if(need_catkin OR CMAKE_INSTALL_PREFIX)
   find_package(catkin)
   if(catkin_FOUND)
     catkin_package_xml()
