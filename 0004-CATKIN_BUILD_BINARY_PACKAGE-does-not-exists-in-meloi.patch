@@ -1,0 +1,26 @@
+From 7423c8fb1c1007f613d892656fbe06a069344bd4 Mon Sep 17 00:00:00 2001
+From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
+Date: Thu, 23 Apr 2020 23:28:55 +0900
+Subject: [PATCH 4/4] CATKIN_BUILD_BINARY_PACKAGE does not exists in meloidc,
+ use CMAKE_INSTALL_PREFIX
+
+---
+ CMakeLists.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4f0c356..264ce4c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -221,7 +221,7 @@ add_subdirectory(test)
+ 
+ #if catkin environment
+ string(REGEX MATCH "catkin" need_catkin "$ENV{_}")
+-if(need_catkin OR "${CATKIN_BUILD_BINARY_PACKAGE}")
++if(need_catkin OR CMAKE_INSTALL_PREFIX)
+   find_package(catkin)
+   if(catkin_FOUND)
+     catkin_package_xml()
+-- 
+2.17.1
+
