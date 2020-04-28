@@ -221,7 +221,9 @@ add_subdirectory(test)
 
 #if catkin environment
 string(REGEX MATCH "catkin" need_catkin "$ENV{_}")
+message(WARNING "need_catkin: ${need_catkin}, CMAKE_INSTALL_PREFIX: ${CMAKE_INSTALL_PREFIX}")
 if(need_catkin OR CMAKE_INSTALL_PREFIX)
+  message(WARNING "install package.xml and others")
   find_package(catkin)
   if(catkin_FOUND)
     catkin_package_xml()
@@ -256,12 +258,15 @@ execute_process(COMMAND cmake -E make_directory share/hrpsys WORKING_DIRECTORY \
 execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/idl     share/hrpsys/idl WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
 execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/samples share/hrpsys/samples WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
 ")
+  install(CODE "file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/.catkin\")") ## remove .catkin from install
 endif()
 if(need_catkin)
+  message(WARNING "install tricky force write catkin marker file")
   install(CODE
 "
 ## this is tricky force write catkin marker file
 set(_catkin_marker_file \"\${CMAKE_INSTALL_PREFIX}/.catkin\")
+messaeg(WARNING \"_catkin_marker_file \"\${_catkin_marker_file}\")
 # check if the develspace marker file exists yet
 if(EXISTS \${_catkin_marker_file})
   file(READ \${_catkin_marker_file} _existing_sourcespaces)
