@@ -1,7 +1,7 @@
-From 7423c8fb1c1007f613d892656fbe06a069344bd4 Mon Sep 17 00:00:00 2001
+From 3d4be01ae13eee51a27ac691a67ad04e41b9f32a Mon Sep 17 00:00:00 2001
 From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
 Date: Thu, 23 Apr 2020 23:28:55 +0900
-Subject: [PATCH 4/4] CATKIN_BUILD_BINARY_PACKAGE does not exists in meloidc,
+Subject: [PATCH 4/5] CATKIN_BUILD_BINARY_PACKAGE does not exists in meloidc,
  use CMAKE_INSTALL_PREFIX
 
 ---
