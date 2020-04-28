@@ -1,4 +1,4 @@
-From 140d46c13a8e14f5d101b026c8f9b8e693a8c806 Mon Sep 17 00:00:00 2001
+From 6bead91fbaa2f5dd38483915b9c489d29958b824 Mon Sep 17 00:00:00 2001
 From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
 Date: Tue, 28 Apr 2020 11:10:26 +0900
 Subject: [PATCH 5/5] force remove .catkin from deb install script

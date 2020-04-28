@@ -1,4 +1,4 @@
-From 3d4be01ae13eee51a27ac691a67ad04e41b9f32a Mon Sep 17 00:00:00 2001
+From de40755e5dc3dfab6dbdce0bf7631c80b6eeefbc Mon Sep 17 00:00:00 2001
 From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
 Date: Thu, 23 Apr 2020 23:28:55 +0900
 Subject: [PATCH 4/5] CATKIN_BUILD_BINARY_PACKAGE does not exists in meloidc,

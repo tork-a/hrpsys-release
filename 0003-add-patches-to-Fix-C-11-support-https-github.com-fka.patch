@@ -1,4 +1,4 @@
-From ba7631d0e219b74307822c53af27bcb1d20d175a Mon Sep 17 00:00:00 2001
+From d4e31fe7e6d9e810775f2e77fd51e931dc3e2486 Mon Sep 17 00:00:00 2001
 From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
 Date: Thu, 16 Apr 2020 19:40:14 +0900
 Subject: [PATCH 3/5] add patches to Fix C++11 support
