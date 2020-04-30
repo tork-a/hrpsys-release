@@ -1,0 +1,25 @@
+From 5a1d45eb36b18d7b8c5d9cdea653d0f433f50b55 Mon Sep 17 00:00:00 2001
+From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
+Date: Thu, 30 Apr 2020 20:04:16 +0900
+Subject: [PATCH 6/6] remove more redundant files
+
+---
+ CMakeLists.txt | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0100af9..147cbde 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -259,6 +259,8 @@ execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/idl     share/hr
+ execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/samples share/hrpsys/samples WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
+ ")
+   install(CODE "file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/.catkin\")") ## remove .catkin from install
++  install(CODE "file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/.rosinstall\")") ##
++  install(CODE "file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/_setup_util.py\")") ##
+ endif()
+ if(need_catkin)
+   message(WARNING "install tricky force write catkin marker file")
+-- 
+2.17.1
+

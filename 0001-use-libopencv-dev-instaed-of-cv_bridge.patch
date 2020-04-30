@@ -1,7 +1,7 @@
-From c8aefab96689c9b7812859a376d5a56f16646a4d Mon Sep 17 00:00:00 2001
+From b09347d89eba74a21e8fc2bab0540c56e467ede9 Mon Sep 17 00:00:00 2001
 From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
 Date: Sun, 6 Aug 2017 04:36:35 +0000
-Subject: [PATCH 1/5] use libopencv-dev instaed of cv_bridge
+Subject: [PATCH 1/6] use libopencv-dev instaed of cv_bridge
 
 ---
  package.xml | 4 ++--
