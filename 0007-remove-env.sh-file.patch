@@ -1,7 +1,7 @@
-From 6e9f689ee7b264bfd6f0b0b38cfb110a467d7cb4 Mon Sep 17 00:00:00 2001
+From 4973d324d8770a7c54e7966c8b96362aa5559fac Mon Sep 17 00:00:00 2001
 From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
 Date: Fri, 1 May 2020 11:26:07 +0900
-Subject: [PATCH 7/7] remove env.sh file
+Subject: [PATCH 7/8] remove env.sh file
 
 ---
  CMakeLists.txt | 1 +

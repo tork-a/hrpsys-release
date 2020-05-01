@@ -1,7 +1,7 @@
-From 99d1d2a043a7944d7c3671fd7bd12896402e23ed Mon Sep 17 00:00:00 2001
+From c69ab099f09849571f3f937844fb765c9b36e7d4 Mon Sep 17 00:00:00 2001
 From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
 Date: Tue, 28 Apr 2020 11:10:26 +0900
-Subject: [PATCH 5/7] force remove .catkin from deb install script
+Subject: [PATCH 5/8] force remove .catkin from deb install script
 
 ---
  CMakeLists.txt | 5 +++++
