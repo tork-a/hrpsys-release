@@ -1,7 +1,7 @@
-From 4e024c284b2798c3b11244b61f9825aa9c69ebcb Mon Sep 17 00:00:00 2001
+From 06cc33fa23672caf70d96b9f198f0a51d7ca9c14 Mon Sep 17 00:00:00 2001
 From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
 Date: Thu, 16 Apr 2020 19:39:40 +0900
-Subject: [PATCH 2/6] add patches to Update to compile with C++11
+Subject: [PATCH 2/7] add patches to Update to compile with C++11
  (https://github.com/fkanehiro/hrpsys-base/pull/1217)
 
 Here are a few changes that were accidentally left out in the previous attempt to compile with C++11.

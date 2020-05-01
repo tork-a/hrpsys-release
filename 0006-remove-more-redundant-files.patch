@@ -1,7 +1,7 @@
-From 5a1d45eb36b18d7b8c5d9cdea653d0f433f50b55 Mon Sep 17 00:00:00 2001
+From 9fbf10c653b8ee35bf78c065dd23fb72cdb24bf7 Mon Sep 17 00:00:00 2001
 From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
 Date: Thu, 30 Apr 2020 20:04:16 +0900
-Subject: [PATCH 6/6] remove more redundant files
+Subject: [PATCH 6/7] remove more redundant files
 
 ---
  CMakeLists.txt | 2 ++

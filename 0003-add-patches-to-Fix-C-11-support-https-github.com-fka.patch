@@ -1,7 +1,7 @@
-From 4fc2f33da51bbe5bdac617543c1b9a9ea4c0d0b4 Mon Sep 17 00:00:00 2001
+From fb2109b5ff572c9ca020966ff356e14816f83cc2 Mon Sep 17 00:00:00 2001
 From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
 Date: Thu, 16 Apr 2020 19:40:14 +0900
-Subject: [PATCH 3/6] add patches to Fix C++11 support
+Subject: [PATCH 3/7] add patches to Fix C++11 support
  (https://github.com/fkanehiro/hrpsys-base/pull/1241)
 
 ---

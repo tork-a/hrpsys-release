@@ -1,0 +1,24 @@
+From 6e9f689ee7b264bfd6f0b0b38cfb110a467d7cb4 Mon Sep 17 00:00:00 2001
+From: Kei Okada <k-okada@jsk.t.u-tokyo.ac.jp>
+Date: Fri, 1 May 2020 11:26:07 +0900
+Subject: [PATCH 7/7] remove env.sh file
+
+---
+ CMakeLists.txt | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 147cbde..6f125d1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -261,6 +261,7 @@ execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/samples share/hr
+   install(CODE "file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/.catkin\")") ## remove .catkin from install
+   install(CODE "file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/.rosinstall\")") ##
+   install(CODE "file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/_setup_util.py\")") ##
++  install(CODE "file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/env.sh\")") ##
+ endif()
+ if(need_catkin)
+   message(WARNING "install tricky force write catkin marker file")
+-- 
+2.17.1
+
