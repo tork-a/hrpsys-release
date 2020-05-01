@@ -258,10 +258,12 @@ execute_process(COMMAND cmake -E make_directory share/hrpsys WORKING_DIRECTORY \
 execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/idl     share/hrpsys/idl WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
 execute_process(COMMAND cmake -E create_symlink ../../../hrpsys/samples share/hrpsys/samples WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/hrpsys)
 ")
-  install(CODE "file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/.catkin\")") ## remove .catkin from install
-  install(CODE "file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/.rosinstall\")") ##
-  install(CODE "file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/_setup_util.py\")") ##
-  install(CODE "file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/env.sh\")") ##
+  ## remove .catkin and others from install
+  install(CODE "
+  file(GLOB RM_FILES \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/*\")
+  foreach(RM_FILE \${RM_FILES})
+    file(REMOVE \${RM_FILE})
+  endforeach()")
 endif()
 if(need_catkin)
   message(WARNING "install tricky force write catkin marker file")
