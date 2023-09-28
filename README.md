@@ -1,3 +1,26 @@
+## hrpsys (noetic) - 315.15.0-1
+
+The packages in the `hrpsys` repository were released into the `noetic` distro by running `/home/k-okada/.local/bin/bloom-release hrpsys --track noetic --rosdistro noetic` on `Thu, 28 Sep 2023 09:43:45 -0000`
+
+The `hrpsys` package was released.
+
+Version of package(s) in repository `hrpsys`:
+
+- upstream repository: https://github.com/fkanehiro/hrpsys-base.git
+- release repository: unknown
+- rosdistro version: `null`
+- old version: `null`
+- new version: `315.15.0-1`
+
+Versions of tools used:
+
+- bloom version: `0.11.2`
+- catkin_pkg version: `0.5.2`
+- rosdep version: `0.22.2`
+- rosdistro version: `0.9.0`
+- vcstools version: `0.1.42`
+
+
 ## hrpsys (melodic) - 315.15.0-5
 
 The packages in the `hrpsys` repository were released into the `melodic` distro by running `/usr/bin/bloom-release hrpsys --rosdistro melodic --track melodic` on `Tue, 28 Apr 2020 02:17:32 -0000`
